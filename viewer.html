@@ -1944,7 +1944,7 @@ const carKey = (x, z) => `${Math.floor(x / CELL_CAR)},${Math.floor(z / CELL_CAR)
 function collectObstacles() {
   obstacles.length = 0;
   for (const p of crossers) obstacles.push([p.cx, p.cz]);
-  if (mode === 'walk' && world === CITY) obstacles.push([walk.pos.x, walk.pos.z]);
+  if (mode === 'walk' && world === CITY && Math.abs(walk.v) < 0.1 * walk.scale && !walk.jy && !walk.knock) obstacles.push([walk.pos.x, walk.pos.z]);
   carGrid.clear();
   for (const c of cars) {
     if (!c.active || c.x === undefined) continue;
@@ -2864,6 +2864,7 @@ async function startWalkNow() {
   walk.pos.set(x, groundAt(x, z), z);
   walk.jy = walk.vy = 0;
   walk.sit = null; walk.sitT = 0; renderSitBtn();
+  walk.knock = 0; walk.tumble = 0; walk.kx = walk.kz = 0;
   walk.yaw = Math.atan2(camera.position.x - x, camera.position.z - z);
   walk.heading = walk.yaw + Math.PI;
   walk.pitch = 0.32;
@@ -2928,6 +2929,7 @@ function updateWalk(dt, time) {
     if (k.has('KeyA') || k.has('ArrowLeft')) turn += 1;
     if (k.has('KeyD') || k.has('ArrowRight')) turn -= 1;
   }
+  if (walk.knock > 0) { fwd = 0; turn = 0; walk.jumpQ = false; }
   if (walk.sit && (fwd || turn || walk.jumpQ)) { standUp(); walk.jumpQ = false; }
   if (walk.sit) { fwd = 0; turn = 0; walk.v = 0; }
   const run = k.has('ShiftLeft') || k.has('ShiftRight');
@@ -2939,6 +2941,18 @@ function updateWalk(dt, time) {
   const feet = walk.pos.y + walk.jy, reach = feet + 0.2 * H;
   const stuck = world.solid(walk.pos.x, walk.pos.z, reach, R_AVATAR * H * 0.7);
   const stop = (x, z) => world.blocked(x, z) || (!stuck && world.solid(x, z, reach, R_AVATAR * H * 0.7));
+  // 🚗 차에 부딪힘: 달리는 차는 주인공을 차가 가던 쪽 + 옆으로 날려 보내고, 서 있는 차는 벽처럼 막는다
+  if (world === CITY && walk.ready) hitByCars(H, dt);
+  if (walk.knock > 0) {
+    walk.knock -= dt;
+    const kx = walk.kx * dt, kz = walk.kz * dt, px = walk.pos.x, pz = walk.pos.z;
+    if (!stop(px + kx, pz + kz)) { walk.pos.x += kx; walk.pos.z += kz; }
+    else if (!stop(px + kx, pz)) { walk.pos.x += kx; walk.kz *= -0.4; }
+    else if (!stop(px, pz + kz)) { walk.pos.z += kz; walk.kx *= -0.4; }
+    else { walk.kx *= -0.4; walk.kz *= -0.4; } // 벽에 맞으면 살짝 되튄다
+    const f = Math.exp(-dt * (walk.jy > 0 ? 0.6 : 5)); // 공중에선 거의 그대로, 땅에선 금방 멈춘다
+    walk.kx *= f; walk.kz *= f;
+  }
   if (Math.abs(walk.v) > 1e-3) {
     const sp = walk.v * dt;
     const ix = Math.sin(walk.heading) * sp, iz = Math.cos(walk.heading) * sp;
@@ -2985,6 +2999,19 @@ function updateWalk(dt, time) {
   const ud = avatar.userData, body = ud.body, sw = walk.swing;
   poseHoodie(ud, walk.phase, sw, time);
   body.rotation.x = walk.v > 0 ? clamp(speedH / 5, 0, 1) * 0.18 : 0;
+  if (walk.knock > 0 || walk.tumble) {
+    if (walk.jy > 0) walk.tumble = (walk.tumble || 0) + dt * 11 * (walk.tumbleDir || 1);
+    else { // 땅에 닿으면 가장 가까운 한 바퀴에 맞춰 멈추고 일어선다
+      const full = Math.PI * 2, tgt = Math.round(walk.tumble / full) * full;
+      walk.tumble += (tgt - walk.tumble) * Math.min(1, dt * 10);
+      if (Math.abs(tgt - walk.tumble) < 0.02) walk.tumble = 0;
+    }
+    // 몸 가운데(키 0.45)를 축으로 구른다
+    body.position.y += 0.45 * (1 - Math.cos(walk.tumble));
+    body.position.z -= 0.45 * Math.sin(walk.tumble);
+    body.rotation.x += walk.tumble;
+    for (const hd of ud.hands) hd.position.y += 0.18 * Math.min(1, walk.knock * 2); // 허우적
+  }
   body.rotation.z += turn * clamp(speedH / 2.2, 0, 1) * 0.08;
   // 공중: 발은 접어 올리고 손은 번쩍, 오를 땐 길쭉하게
   if (air > 0) for (let k = 0; k < 2; k++) {
@@ -2994,6 +3021,16 @@ function updateWalk(dt, time) {
     f.rotation.x += (-0.35 - f.rotation.x) * air;
     hd.position.y += 0.2 * air;
     hd.position.x += side * 0.05 * air;
+  }
+  // 구르는 동안 떠 있는 손발도 몸과 같은 축(키 0.45)으로 함께 돈다
+  if (walk.tumble) {
+    const c = Math.cos(walk.tumble), sn = Math.sin(walk.tumble);
+    for (const o of [...ud.hands, ...ud.feet]) {
+      const y = o.position.y - 0.45, z = o.position.z;
+      o.position.y = 0.45 + y * c - z * sn;
+      o.position.z = y * sn + z * c;
+    }
+    for (const f of ud.feet) f.rotation.x += walk.tumble;
   }
   const squash = (1 - Math.cos(2 * walk.phase)) * 0.5 * 0.04 * Math.min(1, sw) * (1 - air) + walk.land * 0.14 - (walk.vy > 0 ? 0.06 * air : 0);
   const breathe = Math.sin(time * 2) * 0.012 * (1 - Math.min(1, sw)) * (1 - air);
@@ -3043,6 +3080,41 @@ function updateWalk(dt, time) {
   // 1인칭에선 카메라가 머리 안으로 들어오면 몸을 숨긴다
   avatar.visible = camera.position.distanceTo(headPos()) > 0.55;
   if (world === CITY) hideOccludingLamps(headPos(), camera.position);
+}
+
+// 차와 주인공이 겹치는지 차의 몸통(길이 1.8 × 폭 0.86) 기준으로 본다
+function hitByCars(H, dt) {
+  walk.knockCool = Math.max(0, (walk.knockCool || 0) - dt);
+  const r = R_AVATAR * H, feet = walk.pos.y + walk.jy;
+  for (const c of carsNear(walk.pos.x, walk.pos.z)) {
+    if (!c.active || c.x === undefined) continue;
+    const y = c.trans ? c.trans.y1 : c.ring.lvl;
+    if (feet > y + 0.85) continue; // 차 지붕보다 높이 뛰었다 — 넘어간다
+    const dx = walk.pos.x - c.x, dz = walk.pos.z - c.z;
+    const lz = dx * c.hx + dz * c.hz, lx = dx * c.hz - dz * c.hx; // 차 앞쪽 / 오른쪽
+    const ox = 0.43 + r - Math.abs(lx), oz = 0.9 + r - Math.abs(lz);
+    if (ox <= 0 || oz <= 0) continue;
+    if (c.v > 0.6 && !walk.knockCool) {
+      // 앞에서 받히면 차가 가던 쪽으로, 옆에서 스치면 옆으로 더
+      const side = Math.sign(lx) || 1, front = lz > 0 ? 1 : 0.4;
+      const sp = 1.2 + c.v * 1.1 * front;
+      walk.kx = c.hx * sp + c.hz * side * 1.6;
+      walk.kz = c.hz * sp - c.hx * side * 1.6;
+      walk.vy = Math.max(walk.vy || 0, (3.5 + c.v * 0.6) * H);
+      walk.jy = Math.max(walk.jy, 0.01);
+      walk.knock = 1.1; walk.knockCool = 0.8; walk.v = 0;
+      // 날아가는 쪽으로 구른다 (앞에서 받히면 뒤로 공중제비)
+      walk.tumbleDir = Math.sign(walk.kx * Math.sin(walk.heading) + walk.kz * Math.cos(walk.heading)) || 1;
+      if (walk.sit) standUp();
+      c.v *= 0.3; // 차도 놀라서 선다
+      sfx.bonk();
+      return;
+    }
+    // 서 있거나 느린 차: 덜 겹친 쪽으로 밀어낸다
+    if (ox < oz) { const k = ox * Math.sign(lx || 1); walk.pos.x += c.hz * k; walk.pos.z -= c.hx * k; }
+    else { const k = oz * Math.sign(lz || 1); walk.pos.x += c.hx * k; walk.pos.z += c.hz * k; }
+    walk.v *= 0.5;
+  }
 }
 
 // 🪑 앉기: 가까운 빈 자리(도시는 벤치, 건물 안은 책상 의자 · 소파)가 있으면 거기 앉고, 없으면 그 자리 바닥에
@@ -3756,6 +3828,7 @@ function placeAvatarInside(x, z, heading) {
   walk.pos.set(x, 0, z);
   walk.jy = walk.vy = 0;
   walk.sit = null; walk.sitT = 0; renderSitBtn();
+  walk.knock = 0; walk.tumble = 0; walk.kx = walk.kz = 0;
   walk.heading = heading;
   walk.yaw = heading + Math.PI;
   walk.near = undefined;
@@ -4312,6 +4385,12 @@ function tickAudio() {
 const sfxOn = () => AC && SOUND.sfx && AC.state === 'running';
 const sfx = {
   click() { if (sfxOn()) tone(sfxBus, { f: 880, f2: 1320, a: 0.003, d: 0.06, g: 0.05 }); },
+  bonk() {
+    if (!sfxOn()) return;
+    noise(sfxBus, { d: 0.18, g: 0.16, f: 260, q: 0.8, type: 'lowpass' });
+    tone(sfxBus, { f: 150, f2: 520, a: 0.004, d: 0.35, g: 0.1 });
+    for (const f of [415, 523]) tone(sfxBus, { f, type: 'square', at: 0.08, a: 0.01, d: 0.22, g: 0.025, lp: 1800 });
+  },
   pop() { if (sfxOn()) tone(sfxBus, { f: 520, f2: 900, a: 0.004, d: 0.12, g: 0.09, wet: 0.2 }); },
   step(inside, run) {
     if (!sfxOn()) return;
