@@ -103,6 +103,11 @@ function isGitRepo(dir) {
   try { return git(['rev-parse', '--is-inside-work-tree'], dir).trim() === 'true'; } catch { return false; }
 }
 
+// git init 만 하고 아직 커밋이 없으면 HEAD 가 없어 git log 가 실패한다
+function hasCommits(dir) {
+  try { git(['rev-parse', '--verify', '-q', 'HEAD'], dir); return true; } catch { return false; }
+}
+
 function listFiles(root, useGit) {
   if (useGit) {
     // 추적 중인 파일 + 아직 커밋 안 한 새 파일 (.gitignore는 존중)
@@ -295,8 +300,10 @@ function buildData(target, { exclude = [], docs = false, source = false, log = (
 
   let history = { commits: [], authors: [] };
   if (useGit) {
-    log('📜 git 기록 읽는 중...');
-    history = readHistory(target, new Map(files.map((f) => [f.p, f])), now);
+    if (hasCommits(target)) {
+      log('📜 git 기록 읽는 중...');
+      history = readHistory(target, new Map(files.map((f) => [f.p, f])), now);
+    } else log('📜 아직 커밋이 없어 기록 없이 진행');
     const wip = readWip(target);
     for (const f of files) if (wip.has(f.p)) f.wip = 1;
   }
