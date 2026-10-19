@@ -826,17 +826,27 @@ const DIST_COLORS = ['#3a3f48', '#a6a196', '#bdb7aa', '#c8c2b5', '#b2ac9f'].map(
 const distMesh = inst(box, groundMat, districts.length, { cast: false });
 const distVisible = new Uint8Array(districts.length).fill(1);
 const alleyMesh = inst(box, groundMat, districts.length, { cast: false });
+const exitMesh = inst(box, groundMat, Math.max(1, districts.length), { cast: false });
 function writeDistricts() {
   districts.forEach((d, k) => {
     const v = d.vis;
     alleyMesh.setColorAt(k, DIST_COLORS[0]);
     if (d.depth === 2 && distVisible[k]) put(alleyMesh, k, d.x + d.w / 2, topY(1) - 0.096, d.y + d.h / 2, d.w, 0.1, d.h);
     else alleyMesh.setMatrixAt(k, ZERO);
+    exitMesh.setColorAt(k, DIST_COLORS[0]);
+    const e = d.exit;
+    if (e && distVisible[k]) {
+      // 큰길가 보도 끝(큰길 테두리 + 1.7)부터 골목 테두리까지, 길이 방향으로는 S 자가 지나는 만큼
+      const m = e.main, depthIn = INSET(1) - 0.05, across = e.gap - depthIn + 0.05, mid = depthIn + across / 2, along = EXIT_L + 1.2;
+      const [cx, cz] = [[e.coord, m.y + mid], [m.x + m.w - mid, e.coord], [e.coord, m.y + m.h - mid], [m.x + mid, e.coord]][e.side];
+      put(exitMesh, k, cx, topY(1) - 0.096, cz, e.side % 2 ? across : along, 0.1, e.side % 2 ? along : across);
+    } else exitMesh.setMatrixAt(k, ZERO);
     if (!distVisible[k] || v.w <= 0 || v.h <= 0) { distMesh.setMatrixAt(k, ZERO); return; }
     put(distMesh, k, v.x + v.w / 2, topY(d.depth) - 0.1, v.y + v.h / 2, v.w, 0.1, v.h);
   });
   distMesh.instanceMatrix.needsUpdate = true;
   alleyMesh.instanceMatrix.needsUpdate = true;
+  exitMesh.instanceMatrix.needsUpdate = true;
 }
 writeDistricts();
 
@@ -926,7 +936,7 @@ function onRing(r, s, lateral) {
   return [x, z + h - (s / r.h) * h, 0, -1];
 }
 const roads = districts.filter((d) => d.depth === 1 || d.depth === 2).map((d) => ({
-  x: d.x, y: d.y, w: d.w, h: d.h, len: 2 * (d.w + d.h), lvl: topY(d.depth - 1), main: d.depth === 1,
+  d, x: d.x, y: d.y, w: d.w, h: d.h, len: 2 * (d.w + d.h), lvl: topY(d.depth - 1), main: d.depth === 1,
 }));
 // 보행로: 최상위 폴더 구역은 큰길가 보도, 2단 구역은 골목 안쪽 블록 보도, 3단 이상은 그 바깥 둘레, 도시 전체는 외곽 둘레
 // (중첩 폴더 둘레에만 깔면 깊은 폴더로 사람이 몰린다). 차선과 겹치지 않는다
@@ -948,8 +958,37 @@ dashes.forEach(([r, s, lat], k) => {
 });
 
 // 가로등
+// 🚗 골목 출입로: 골목(2단 구역 둘레)이 큰길가에 붙어 있으면 그 변 가운데에서 보도를 가로질러 큰길로 잇는다.
+// 차는 같은 방향(고리 s 가 느는 쪽) 차선끼리 S 자로 옮겨 타며 들어오고 나간다
+const EXIT_L = 3.2;
+// 고리의 side 번째 변 위 좌표 coord 의 s (0 위 · 1 오른쪽 · 2 아래 · 3 왼쪽)
+const sOnSide = (r, side, coord) => [coord - r.x, r.w + coord - r.y, r.w + r.h + (r.x + r.w - coord), 2 * r.w + r.h + (r.y + r.h - coord)][side];
+const exits = [];
+for (const a of roads.filter((r) => !r.main)) {
+  const m = roads.find((r) => r.main && a.x >= r.x - 1e-6 && a.y >= r.y - 1e-6 && a.x + a.w <= r.x + r.w + 1e-6 && a.y + a.h <= r.y + r.h + 1e-6);
+  if (!m) continue;
+  const gaps = [[a.y - m.y, 0], [m.x + m.w - (a.x + a.w), 1], [m.y + m.h - (a.y + a.h), 2], [a.x - m.x, 3]]
+    .filter(([g]) => g <= PAD(1) + 0.05).sort((p, q) => p[0] - q[0]);
+  for (const [gap, side] of gaps) {
+    const [a0, a1, m0, m1] = side % 2 === 0 ? [a.x, a.x + a.w, m.x, m.x + m.w] : [a.y, a.y + a.h, m.y, m.y + m.h];
+    // 골목 모퉁이 · 큰길 교차로(모서리)에서 떨어진 곳
+    const lo = Math.max(a0 + ALLEY_W + EXIT_L / 2, m0 + 4 + EXIT_L / 2), hi = Math.min(a1 - ALLEY_W - EXIT_L / 2, m1 - 4 - EXIT_L / 2);
+    if (lo > hi) continue;
+    const coord = clamp((a0 + a1) / 2, lo, hi);
+    const e = { alley: a, main: m, side, gap, coord, sA: sOnSide(a, side, coord), sM: sOnSide(m, side, coord) };
+    exits.push(e);
+    (a.exits ||= []).push(e);
+    (m.exits ||= []).push(e);
+    a.d.exit = e;
+    break;
+  }
+}
+writeDistricts(); // 출입로 바닥까지
 const lamps = [];
-for (const r of roads.filter((r) => r.main)) for (let s = 3; s < r.len; s += 9) lamps.push(onRing(r, s, INSET(1) - 0.35).concat(r.lvl));
+for (const r of roads.filter((r) => r.main)) for (let s = 3; s < r.len; s += 9) {
+  if (r.exits?.some((e) => Math.abs(s - e.sM) < EXIT_L / 2 + 0.8)) continue; // 출입로 어귀는 비운다
+  lamps.push(onRing(r, s, INSET(1) - 0.35).concat(r.lvl));
+}
 const poleMesh = inst(box, metalMat, lamps.length);
 const lampMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
 const lampMesh = inst(box, lampMat, lamps.length, { cast: false, receive: false });
@@ -1851,9 +1890,10 @@ function moveStreets(dt, time) {
       return;
     }
     driveCar(c, dt, time);
-    let [x, z, tx, tz] = onRing(c.ring, c.s, c.lane);
-    tx *= c.dir; tz *= c.dir;
-    const y = c.ring.lvl, bob = Math.abs(Math.sin(time * 9 + k)) * 0.008;
+    let x, z, tx, tz, y;
+    if (c.trans) { x = c.x; z = c.z; tx = c.hx; tz = c.hz; y = c.trans.y0 + (c.trans.y1 - c.trans.y0) * c.trans.t; }
+    else { [x, z, tx, tz] = onRing(c.ring, c.s, c.lane); tx *= c.dir; tz *= c.dir; y = c.ring.lvl; }
+    const bob = Math.abs(Math.sin(time * 9 + k)) * 0.008;
     const sx = tz, sz = -tx; // 차의 오른쪽
     putOriented(carBody, k, x, y + 0.13 + bob, z, tx, tz, 0, 0.86, 0.36, 1.7);
     putOriented(carCab, k, x, y + 0.49 + bob, z, tx, tz, -0.1, 0.76, 0.3, 0.96);
@@ -1872,10 +1912,12 @@ function moveStreets(dt, time) {
   for (const m of CAR_PARTS) m.instanceMatrix.needsUpdate = true;
   const activePeople = Math.round(people.length * progress);
   people.forEach((p, k) => {
+    p.px = undefined;
     if (k >= activePeople) { crossers.delete(p); hidePerson(k); return; }
     const at = walkPerson(p, dt);
     if (!at) { crossers.delete(p); hidePerson(k); return; }
     const [x, y, z, yaw, scale, moving] = at;
+    p.px = x; p.pz = z;
     // 걸음 위상을 속도에 맞춘다 (발이 미끄러지지 않게). 섰다 걷다 할 때 자세가 부드럽게 바뀐다
     const sp = moving ? (p.state === 'cross' ? 1.35 : 1) * p.speed / p.size : 0;
     p.step = (p.step || p.phase) + dt * Math.PI * sp / strideOf(sp);
@@ -1919,7 +1961,49 @@ function carsNear(x, z) {
   }
   return out.length ? out : NO_CARS;
 }
+// S 자 곡선 (3차 베지에)
+function bez(T, t) {
+  const [p0, p1, p2, p3] = T.P, u = 1 - t;
+  const a = u * u * u, b = 3 * u * u * t, cc = 3 * u * t * t, d = t * t * t;
+  const da = -3 * u * u, db = 3 * u * u - 6 * u * t, dc = 6 * u * t - 3 * t * t, dd = 3 * t * t;
+  return [a * p0[0] + b * p1[0] + cc * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + cc * p2[1] + d * p3[1],
+    da * p0[0] + db * p1[0] + dc * p2[0] + dd * p3[0], da * p0[1] + db * p1[1] + dc * p2[1] + dd * p3[1]];
+}
+// 출입로 어귀를 지나는 차가 옮겨 탈지 정한다 — 골목에서는 자주 나가고, 큰길에서는 가끔 들어온다
+function maybeTurn(c, s0, s1) {
+  if (c.dir < 0 || !c.ring.exits) return;
+  for (const e of c.ring.exits) {
+    const out = c.ring === e.alley, at = (out ? e.sA : e.sM) + (out ? -EXIT_L / 2 : -EXIT_L / 2);
+    if (!(s0 < at && s1 >= at)) continue;
+    if (Math.random() > (out ? 0.6 : 0.25)) return;
+    const to = out ? e.main : e.alley, sTo = (out ? e.sM : e.sA) + EXIT_L / 2, laneTo = laneOf(to, 1);
+    const [x0, z0, tx, tz] = onRing(c.ring, at, c.lane), [x3, z3] = onRing(to, sTo, laneTo);
+    // 들어갈 차선 어귀에 차가 있으면 이번엔 그냥 지나간다
+    if (carsNear(x3, z3).some((o) => o !== c && Math.hypot(o.x - x3, o.z - z3) < 1.8)) return;
+    const h = EXIT_L / 2;
+    c.trans = { P: [[x0, z0], [x0 + tx * h, z0 + tz * h], [x3 - tx * h, z3 - tz * h], [x3, z3]], t: 0, len: Math.hypot(x3 - x0, z3 - z0) * 1.08, to, s: sTo, lane: laneTo, y0: c.ring.lvl, y1: to.lvl };
+    return;
+  }
+}
+// 출입로 위: 곡선을 따라가며 앞에 차 · 사람 · 걷는 주인공이 있으면 선다
+function driveTrans(c, dt) {
+  const T = c.trans;
+  let want = c.speed * 0.6;
+  for (const d of [0.7, 1.3, 1.9]) {
+    const [ax, az] = bez(T, Math.min(1, T.t + d / T.len));
+    const car = carsNear(ax, az).some((o) => o !== c && Math.hypot(o.x - ax, o.z - az) < 0.75 && !(o.v < 0.2 && c.k < o.k && o.trans));
+    const ped = obstacles.some(([ox, oz]) => Math.hypot(ox - ax, oz - az) < 0.7) || people.some((p) => p.px !== undefined && Math.hypot(p.px - ax, p.pz - az) < 0.6);
+    if (car || ped) { want = Math.max(0, (d - 0.7) * 1.5); break; }
+  }
+  c.v += clamp(want - c.v, -10 * dt, 3 * dt);
+  T.t = Math.min(1, T.t + (c.v * dt) / T.len);
+  const [x, z, dx, dz] = bez(T, T.t), n = Math.hypot(dx, dz) || 1;
+  c.x = x; c.z = z; c.hx = dx / n; c.hz = dz / n;
+  if (T.t >= 1) { c.ring = T.to; c.s = T.s; c.lane = T.lane; c.dir = 1; c.sk = undefined; c.trans = null; }
+  c.active = true;
+}
 function driveCar(c, dt, time) {
+  if (c.trans) return driveTrans(c, dt);
   const r = c.ring;
   let want = c.speed;
   const [dc, ci] = distToCorner(r, c.s, c.dir);
@@ -1950,7 +2034,9 @@ function driveCar(c, dt, time) {
   c.v += clamp(want - c.v, -10 * dt, 3 * dt);
   // 안쪽 차선은 고리보다 짧으니 그만큼 s 를 빨리 넘겨 실제 속도를 맞춘다
   c.sk ??= r.len / Math.max(1, r.len - 8 * c.lane);
-  c.s = (c.s + c.v * c.dir * dt * c.sk + r.len) % r.len;
+  const s0 = c.s, s1 = c.s + c.v * c.dir * dt * c.sk;
+  c.s = (s1 + r.len) % r.len;
+  maybeTurn(c, s0, s1);
   c.active = true;
 }
 
@@ -2063,11 +2149,11 @@ props.hydrant.forEach(({ x, y, z, yaw }, k) => {
   put(hydBody, k, x, y, z, q, 0.32 * q, q); put(hydCap, k, x, y + 0.32 * q, z, q, q, q); put(hydNub, k, x, y + 0.2 * q, z, q, q, q, yaw);
 });
 props.planter.forEach(({ x, y, z, yaw }, k) => {
-  put(planterBox, k, x, y, z, 0.62 * 0.7, 0.28 * 0.7, 0.3 * 0.7, yaw);
+  put(planterBox, k, x, y + 0.14 * 0.7, z, 0.62 * 0.7, 0.28 * 0.7, 0.3 * 0.7, yaw); // 바닥에 얹는다 (상자는 가운데 기준)
   const c = Math.cos(yaw), sn = Math.sin(yaw);
   for (const j of [0, 1]) {
     const lx = j ? 0.1 : -0.1;
-    put(planterBush, k * 2 + j, x + lx * c, y + 0.25, z - lx * sn, 0.14, 0.12, 0.12, k + j);
+    put(planterBush, k * 2 + j, x + lx * c, y + 0.3, z - lx * sn, 0.14, 0.12, 0.12, k + j);
     planterBush.setColorAt(k * 2 + j, leafTint(LEAVES[(k + j) % LEAVES.length], 0.5));
   }
 });
@@ -2086,7 +2172,7 @@ function addPlat(x, z, yaw, hw, hd, top) {
 props.bench.forEach(({ x, y, z, yaw }) => addPlat(x, z, yaw, 0.46 * PK, 0.17 * PK, y + 0.36 * PK));
 props.bin.forEach(({ x, y, z }) => addPlat(x, z, 0, 0.12, 0.12, y + 0.46 * 0.75 + 0.01));
 props.hydrant.forEach(({ x, y, z }) => addPlat(x, z, 0, 0.075, 0.075, y + 0.42 * 0.65));
-props.planter.forEach(({ x, y, z, yaw }) => addPlat(x, z, yaw, 0.31 * 0.7, 0.15 * 0.7, y + 0.14 * 0.7));
+props.planter.forEach(({ x, y, z, yaw }) => addPlat(x, z, yaw, 0.31 * 0.7, 0.15 * 0.7, y + 0.28 * 0.7 + 0.02));
 // 받침 p 의 바닥면이 (x, z) 를 m 만큼 넓혀 덮는가 (돌려 놓은 사각형)
 function platCovers(p, x, z, m) {
   const dx = x - p[0], dz = z - p[1];
