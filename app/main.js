@@ -16,7 +16,7 @@ const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
-const { renderHtml } = require('../scan.js');
+const { renderHtml, gitConfigIsRisky } = require('../scan.js');
 
 const WIP_POLL_MS = 12000;
 const debug = (...a) => process.env.CC_DEBUG && console.log('[cc]', ...a);
@@ -33,6 +33,11 @@ function resolveAppUrl(url) {
   return abs.startsWith(__dirname + path.sep) ? abs : null;
 }
 const LOCAL_ASSETS = { three: `${ORIGIN}/vendor/three/`, hljs: `${ORIGIN}/vendor/hljs/` };
+const CSP = [
+  "default-src 'self'", "script-src 'self' 'unsafe-inline'", "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+  "font-src 'self' data: https://cdn.jsdelivr.net", "img-src 'self' data: blob:", "connect-src 'self'",
+  "object-src 'none'", "base-uri 'none'", "frame-src 'none'", "form-action 'none'",
+].join('; ');
 
 let win = null;
 let current = null; // { root, data, watcher, poll, busy, pending, wipKey }
@@ -61,9 +66,12 @@ function scan(root) {
     w.once('error', reject);
   });
 }
+// scan.js 와 같은 방어 옵션 (저장소 설정이 외부 명령을 띄우지 못하게)
 function git(args, cwd) {
   return new Promise((resolve) => {
-    execFile('git', ['-c', 'core.quotepath=off', ...args], { cwd, maxBuffer: 1 << 26 }, (err, out) => resolve(err ? null : out));
+    execFile('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', ...args],
+      { cwd, maxBuffer: 1 << 26, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' } },
+      (err, out) => resolve(err ? null : out));
   });
 }
 
@@ -77,17 +85,21 @@ function send(status) {
   if (win && !win.isDestroyed()) win.webContents.send('status', status);
 }
 
+// 열기가 겹치면(자동으로 여는 중에 폴더를 끌어다 놓는 등) 마지막 요청만 화면에 올린다
+let openSeq = 0;
 async function openProject(root) {
   stopWatching();
+  const seq = ++openSeq;
   const name = path.basename(root);
   send({ loading: name });
   let data;
   try {
     data = await scan(root);
   } catch (e) {
-    send({ error: e.message });
+    if (seq === openSeq) send({ error: e.message });
     return;
   }
+  if (seq !== openSeq) return;
   remember(root, name);
   current = { root, data };
   await showCity(data, '');
@@ -97,8 +109,10 @@ async function openProject(root) {
 // ───────── 실시간 감시 ─────────
 // 커밋: .git/logs/HEAD 변경을 감지 / 공사 현황: git status를 주기적으로 비교
 async function watch(proj) {
+  if (!proj.data.git || gitConfigIsRisky(proj.root)) return; // git 을 안 쓰는 프로젝트는 실시간 감시도 없다
   proj.wipKey = await git(['status', '--porcelain', '--untracked-files=all'], proj.root);
   const gitDir = (await git(['rev-parse', '--absolute-git-dir'], proj.root))?.trim();
+  if (proj.stopped) return; // 기다리는 사이 다른 프로젝트로 바뀌었다 — 감시자를 남기지 않는다
   if (gitDir && fs.existsSync(path.join(gitDir, 'logs', 'HEAD'))) {
     let timer;
     try {
@@ -158,32 +172,58 @@ async function refresh(proj) {
 }
 
 // ───────── IPC ─────────
-ipcMain.handle('home', () => {
+// 앱 화면(app://repopolis)에서 온 요청만 받는다
+function handle(name, fn) {
+  ipcMain.handle(name, (e, ...args) => (e.senderFrame?.url?.startsWith(ORIGIN) ? fn(e, ...args) : null));
+}
+handle('home', () => {
   stopWatching();
   win.setTitle('Repopolis');
   return win.loadURL(LAUNCHER);
 });
-ipcMain.handle('pick', async () => {
+handle('pick', async () => {
   const r = await dialog.showOpenDialog(win, { title: '도시로 만들 프로젝트 폴더', properties: ['openDirectory'] });
   if (!r.canceled && r.filePaths[0]) await openProject(r.filePaths[0]);
 });
-ipcMain.handle('open-project', (_, root) => openProject(root));
-ipcMain.handle('recent', () => loadConfig().recent.filter((r) => fs.existsSync(r.root)));
-ipcMain.handle('forget', (_, root) => {
+handle('open-project', (_, root) => {
+  if (typeof root !== 'string' || !fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) return null;
+  return openProject(root);
+});
+handle('recent', () => loadConfig().recent.filter((r) => fs.existsSync(r.root)));
+handle('forget', (_, root) => {
   const cfg = loadConfig();
   cfg.recent = cfg.recent.filter((r) => r.root !== root);
   if (cfg.last === root) delete cfg.last;
   saveConfig(cfg);
 });
+// 프로젝트 안의 파일만 — 심볼릭 링크로 밖을 가리키는 것도 실제 경로로 막는다
 const inProject = (rel) => {
-  const abs = path.resolve(current.root, rel);
-  return abs.startsWith(path.resolve(current.root) + path.sep) ? abs : null;
+  if (typeof rel !== 'string') return null;
+  const root = path.resolve(current.root), abs = path.resolve(root, rel);
+  if (!abs.startsWith(root + path.sep)) return null;
+  try {
+    const realRoot = fs.realpathSync(root), real = fs.realpathSync(abs);
+    return real.startsWith(realRoot + path.sep) ? real : null;
+  } catch { return null; }
 };
-ipcMain.handle('open-file', (_, rel) => { const p = current && inProject(rel); if (p) shell.openPath(p); });
-ipcMain.handle('reveal-file', (_, rel) => { const p = current && inProject(rel); if (p) shell.showItemInFolder(p); });
-ipcMain.handle('read-file', (_, rel) => {
+// "파일 열기"가 저장소 안의 스크립트를 실행하지 않게: 에디터(VS Code)가 있으면 에디터로,
+// 없으면 실행될 수 있는 확장자는 폴더에서 보여 주기만 한다
+const RUNNABLE = new Set(['.js', '.jse', '.mjs', '.cjs', '.vbs', '.vbe', '.wsf', '.wsh', '.hta', '.bat', '.cmd', '.com', '.exe', '.scr', '.pif',
+  '.lnk', '.url', '.scf', '.cpl', '.msc', '.msi', '.reg', '.ps1', '.psm1', '.jar', '.command', '.terminal', '.app', '.desktop', '.sh', '.py', '.pyw']);
+function openSafely(p) {
+  if (app.getApplicationNameForProtocol('vscode://')) {
+    return shell.openExternal('vscode://file/' + p.split(path.sep).map((s, k) => (k === 0 && /^[A-Za-z]:$/.test(s) ? s : encodeURIComponent(s))).join('/'));
+  }
+  if (RUNNABLE.has(path.extname(p).toLowerCase())) return shell.showItemInFolder(p);
+  return shell.openPath(p);
+}
+handle('open-file', (_, rel) => { const p = current && inProject(rel); if (p) openSafely(p); });
+handle('reveal-file', (_, rel) => { const p = current && inProject(rel); if (p) shell.showItemInFolder(p); });
+handle('read-file', (_, rel) => {
   const p = current && inProject(rel);
-  if (!p || !fs.existsSync(p) || fs.statSync(p).size > 2 * 1024 * 1024) return null;
+  if (!p) return null;
+  const st = fs.statSync(p, { throwIfNoEntry: false });
+  if (!st || !st.isFile() || st.size > 2 * 1024 * 1024) return null;
   return fs.readFileSync(p, 'utf8');
 });
 
@@ -192,14 +232,20 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
 app.whenReady().then(async () => {
-  protocol.handle('app', (req) => {
+  protocol.handle('app', async (req) => {
     const file = resolveAppUrl(req.url);
-    return file && fs.existsSync(file) ? net.fetch(pathToFileURL(file).toString()) : new Response('not found', { status: 404 });
+    if (!file || !fs.existsSync(file)) return new Response('not found', { status: 404 });
+    const res = await net.fetch(pathToFileURL(file).toString());
+    if (!file.endsWith('.html')) return res;
+    // 화면에는 앱 안의 스크립트만 (글꼴 CSS 만 CDN), 외부로 데이터를 보내는 연결은 막는다
+    const headers = new Headers(res.headers);
+    headers.set('Content-Security-Policy', CSP);
+    return new Response(res.body, { status: res.status, headers });
   });
   win = new BrowserWindow({
     width: 1500, height: 940, minWidth: 900, minHeight: 600,
     backgroundColor: '#090c14', title: 'Repopolis', autoHideMenuBar: true, icon: path.join(__dirname, 'icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
   });
   // 링크(vscode:// 등)는 앱 안에서 열지 않는다
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

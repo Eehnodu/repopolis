@@ -93,10 +93,43 @@ function isSkipped(rel, excludes, docs) {
   return excludes.some((re) => re.test(rel));
 }
 
+// 모든 git 호출에 붙이는 방어 옵션: 저장소 설정이 외부 명령을 띄우지 못하게
+const GIT_SAFE = ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false'];
 function git(args, cwd) {
-  return execFileSync('git', ['-c', 'core.quotepath=off', ...args], {
+  return execFileSync('git', [...GIT_SAFE, ...args], {
     cwd, encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
   });
+}
+
+// zip 으로 받은 저장소의 .git/config 에는 git 이 실행하는 명령(fsmonitor · filter · textconv · 외부 diff · include)이
+// 들어 있을 수 있다. 그런 설정이 있으면 git 을 아예 쓰지 않는다 (읽기만 하고 실행하지 않음)
+// (서브모듈 path · Git LFS 필터 · fsmonitor = true/false 같은 평범한 설정은 통과)
+const RISKY_CORE = new Set(['fsmonitor', 'sshcommand', 'pager', 'editor', 'askpass', 'hookspath', 'gitproxy']);
+function gitConfigIsRisky(dir) {
+  let cfg;
+  try {
+    const gitDir = path.resolve(dir, git(['rev-parse', '--git-dir'], dir).trim());
+    cfg = fs.readFileSync(path.join(gitDir, 'config'), 'utf8');
+  } catch { return false; }
+  let section = '';
+  for (const raw of cfg.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line[0] === '#' || line[0] === ';') continue;
+    const sec = line.match(/^\[\s*([^\s\]"]+)/);
+    if (sec) {
+      section = sec[1].toLowerCase();
+      if (section === 'include' || section === 'includeif') return true; // 다른 설정 파일을 끌어온다
+      continue;
+    }
+    const kv = line.match(/^([\w.-]+)\s*(?:=\s*(.*))?$/);
+    if (!kv) continue;
+    const key = kv[1].toLowerCase(), val = (kv[2] || '').trim().replace(/^"|"$/g, '');
+    if (section === 'core' && RISKY_CORE.has(key) && !(key === 'fsmonitor' && /^(true|false|yes|no|on|off|0|1)$/i.test(val))) return true;
+    if (section === 'filter' && ['clean', 'smudge', 'process'].includes(key) && !/^git-lfs\b/.test(val)) return true;
+    if (section === 'diff' && ['textconv', 'command', 'external'].includes(key)) return true;
+  }
+  return false;
 }
 
 function isGitRepo(dir) {
@@ -127,7 +160,8 @@ function listFiles(root, useGit) {
 
 function analyzeFile(abs, rel) {
   let stat;
-  try { stat = fs.statSync(abs); } catch { return null; }
+  // 심볼릭 링크는 따라가지 않는다 — 저장소 밖 파일(예: ~/.ssh)을 읽어 HTML 에 넣지 않게
+  try { stat = fs.lstatSync(abs); } catch { return null; }
   if (!stat.isFile() || stat.size > MAX_BYTES) return null;
   const buf = fs.readFileSync(abs);
   if (buf.subarray(0, 8000).includes(0)) return null; // 바이너리
@@ -137,13 +171,15 @@ function analyzeFile(abs, rel) {
   if (text.length && text[text.length - 1] !== '\n') lines++;
   if (!lines) return null;
   const lang = LANGS[path.extname(rel).toLowerCase()] || 'Other';
+  // 아주 긴 줄(압축된 코드 등)은 정규식이 오래 걸리므로 함수 · import 세기에서 뺀다
+  const scanText = /[^\n]{2000}/.test(text) ? text.split('\n').filter((l) => l.length < 2000).join('\n') : text;
   let fn = 0;
-  for (const re of FN_PATTERNS[lang] || []) fn += (text.match(re) || []).length;
-  return { p: rel, l: lines, fn, b: stat.size, lang, _text: text, _imp: readImports(text, lang) };
+  for (const re of FN_PATTERNS[lang] || []) fn += (scanText.match(re) || []).length;
+  return { p: rel, l: lines, fn, b: stat.size, lang, _text: text, _imp: readImports(scanText, lang) };
 }
 
 // import 문 → 나중에 프로젝트 안 파일로 연결 ("연결된 건물")
-const JS_IMPORT = /(?:^|[^\w$.])(?:import|export)\s+(?:[^'";]*?\sfrom\s+)?['"]([^'"\n]+)['"]|(?:^|[^\w$.])(?:require|import)\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g;
+const JS_IMPORT = /(?:^|[^\w$.])(?:import|export)\s+(?:[^'";\n]*?\sfrom\s+)?['"]([^'"\n]+)['"]|(?:^|[^\w$.])(?:require|import)\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g;
 const PY_FROM = /^[ \t]*from[ \t]+([.\w]+)[ \t]+import[ \t]+(\([^)]*\)|[^\n#]+)/gm;
 const PY_IMPORT = /^[ \t]*import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)/gm;
 function readImports(text, lang) {
@@ -216,7 +252,7 @@ function resolveDeps(files) {
 function readHistory(root, fileMap, now) {
   const SEP_REC = '\x1e', SEP_FIELD = '\x1f', SEP_BODY = '\x1d';
   const raw = git([
-    'log', '--relative', '--no-renames', '--numstat',
+    'log', '--relative', '--no-renames', '--numstat', '--no-ext-diff', '--no-textconv',
     `--format=${SEP_REC}%H${SEP_FIELD}%at${SEP_FIELD}%an${SEP_FIELD}%s${SEP_FIELD}%b${SEP_BODY}`,
     '--', '.',
   ], root);
@@ -227,6 +263,9 @@ function readHistory(root, fileMap, now) {
   const commits = [];
   const estimate = new Map(); // 경로 → 누적 줄 수 추정
   const recentCut = now - 90 * 86400;
+  // 변경 결합(code-maat 방식): 한 커밋에 함께 바뀐 파일 쌍을 센다. 파일이 너무 많은 커밋(일괄 포매팅 등)은 뺀다
+  const COUPLE_MAX_FILES = 20, revs = new Map(), shared = new Map();
+  const FIX_RE = /\b(fix|fixe[sd]|bug|bugfix|hotfix|revert)\b|버그|오류|에러|고침|핫픽스/i;
 
   for (const rec of records) {
     const bodyEnd = rec.indexOf(SEP_BODY);
@@ -241,8 +280,10 @@ function readHistory(root, fileMap, now) {
     if (!authorIdx.has(an)) { authorIdx.set(an, authors.length); authors.push(an); }
     const ts = +at;
     const claude = /co-authored-by:\s*claude/i.test(body || '') || /^claude\b/i.test(an);
-    const ci = commits.length;
+    const fix = FIX_RE.test(subject || '');
+    const ci = commits.length, ai = authorIdx.get(an);
     let touched = 0;
+    const inCommit = [];
 
     for (const [p, add, del] of changes) {
       const est = Math.max(0, (estimate.get(p) || 0) + add - del);
@@ -250,19 +291,41 @@ function readHistory(root, fileMap, now) {
       const f = fileMap.get(p);
       if (!f) continue;
       touched++;
+      inCommit.push(f._i);
       f.tl.push(ci, est);
       f.ch++;
-      if (ts >= recentCut) f.r90++;
+      if (ts >= recentCut) { f.r90++; f.c90 += add + del; }
       if (claude) f.cl++;
+      if (fix) f.fx++;
       f.ft = f.ft || ts;
       f.lt = ts;
-      f._au.set(authorIdx.get(an), (f._au.get(authorIdx.get(an)) || 0) + 1);
+      f._au.set(ai, (f._au.get(ai) || 0) + 1);
+      f._own.set(ai, (f._own.get(ai) || 0) + add + del + 1); // 소유권: 바꾼 줄 수(+1 = 커밋 자체)
       f.rc.unshift(ci);
       if (f.rc.length > 6) f.rc.pop();
     }
-    commits.push([hash.slice(0, 7), ts, authorIdx.get(an), subject, claude ? 1 : 0, touched, changes.length]);
+    if (inCommit.length >= 2 && inCommit.length <= COUPLE_MAX_FILES) {
+      inCommit.sort((a, b) => a - b);
+      for (const i of inCommit) revs.set(i, (revs.get(i) || 0) + 1);
+      for (let a = 0; a < inCommit.length; a++) for (let b = a + 1; b < inCommit.length; b++) {
+        const k = `${inCommit[a]},${inCommit[b]}`;
+        shared.set(k, (shared.get(k) || 0) + 1);
+      }
+    } else if (inCommit.length === 1) revs.set(inCommit[0], (revs.get(inCommit[0]) || 0) + 1);
+    commits.push([hash.slice(0, 7), ts, ai, subject, claude ? 1 : 0, touched, changes.length]);
   }
-  return { commits, authors };
+  // 결합도 = 함께 바뀐 커밋 수 ÷ 두 파일 커밋 수의 평균. 함께 3번 이상 · 30% 이상만, 파일마다 상위 8개
+  const coupling = new Map();
+  for (const [k, s] of shared) {
+    if (s < 3) continue;
+    const [a, b] = k.split(',').map(Number), deg = s / (((revs.get(a) || 0) + (revs.get(b) || 0)) / 2);
+    if (deg < 0.3) continue;
+    for (const [x, y] of [[a, b], [b, a]]) {
+      if (!coupling.has(x)) coupling.set(x, []);
+      coupling.get(x).push([y, Math.round(Math.min(1, deg) * 100), s]);
+    }
+  }
+  return { commits, authors, coupling };
 }
 
 function openFile(file) {
@@ -286,7 +349,9 @@ function buildData(target, { exclude = [], docs = false, source = false, log = (
   if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error(`폴더를 찾을 수 없어요: ${target}`);
   const name = path.basename(target);
   const excludes = exclude.map(globToRegex);
-  const useGit = isGitRepo(target);
+  const gitHere = isGitRepo(target), risky = gitHere && gitConfigIsRisky(target);
+  const useGit = gitHere && !risky;
+  if (risky) log('⚠️  이 저장소의 .git/config 에 명령을 실행하는 설정이 있어, 안전을 위해 git 기록 없이 진행해요.');
   const now = Math.floor(Date.now() / 1000);
 
   log(`🏙️  ${name} 스캔 중...${useGit ? '' : ' (git 저장소가 아니라 기록 없이 진행)'}`);
@@ -294,11 +359,11 @@ function buildData(target, { exclude = [], docs = false, source = false, log = (
   for (const rel of listFiles(target, useGit)) {
     if (isSkipped(rel, excludes, docs)) continue;
     const f = analyzeFile(path.join(target, rel), rel);
-    if (f) files.push(Object.assign(f, { ch: 0, r90: 0, cl: 0, ft: 0, lt: 0, rc: [], tl: [], _au: new Map() }));
+    if (f) files.push(Object.assign(f, { _i: files.length, ch: 0, r90: 0, c90: 0, cl: 0, fx: 0, ft: 0, lt: 0, rc: [], tl: [], _au: new Map(), _own: new Map() }));
   }
   if (!files.length) throw new Error('그릴 파일이 없어요.');
 
-  let history = { commits: [], authors: [] };
+  let history = { commits: [], authors: [], coupling: new Map() };
   if (useGit) {
     if (hasCommits(target)) {
       log('📜 git 기록 읽는 중...');
@@ -311,7 +376,16 @@ function buildData(target, { exclude = [], docs = false, source = false, log = (
   const src = source ? files.map((f) => f._text) : undefined;
   for (const f of files) {
     f.au = [...f._au].sort((a, b) => b[1] - a[1]).slice(0, 3);
-    delete f._au; delete f._text; delete f._imp;
+    f.na = f._au.size; // 손댄 사람 수
+    // 소유권: 바꾼 줄 수가 가장 많은 사람 = 주인, ow = [작성자, 지분%], fr = 파편화(1 - Σ지분²)%
+    const own = [...f._own].sort((a, b) => b[1] - a[1]), tot = own.reduce((s, x) => s + x[1], 0);
+    if (tot) {
+      f.ow = [own[0][0], Math.round((own[0][1] / tot) * 100)];
+      f.fr = Math.round((1 - own.reduce((s, x) => s + (x[1] / tot) ** 2, 0)) * 100);
+    }
+    const cp = history.coupling.get(f._i);
+    if (cp) f.cp = cp.sort((a, b) => b[1] - a[1] || b[2] - a[2]).slice(0, 8); // [[파일, 결합도%, 함께 바뀐 횟수]]
+    delete f._au; delete f._own; delete f._i; delete f._text; delete f._imp;
   }
   return { name, root: target, generatedAt: now, git: useGit, files, commits: history.commits, authors: history.authors, src };
 }
@@ -349,5 +423,5 @@ function main() {
   if (opts.open) openFile(out);
 }
 
-module.exports = { buildData, renderHtml, summary };
+module.exports = { buildData, renderHtml, summary, gitConfigIsRisky };
 if (require.main === module) main();

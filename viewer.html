@@ -123,6 +123,13 @@
   .sect-title { margin: 18px 0 8px; font-size: 12px; font-weight: 650; color: var(--muted); }
   .commit { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 12px; }
   .commit .when { color: var(--faint); flex: none; width: 52px; font-variant-numeric: tabular-nums; }
+  .rel { all: unset; box-sizing: border-box; cursor: pointer; display: flex; gap: 8px; align-items: center; width: 100%; padding: 5px 6px; margin: 0 -6px; border-radius: 8px; font-size: 12px; }
+  .rel:hover { background: rgba(255,255,255,.06); }
+  .rel i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .rel span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rel small { color: var(--muted); font-size: 11px; flex: none; }
+  .rel .warn, .warn { color: #ff8fb0; font-weight: 650; }
+  .sect-title .sub { font-weight: 450; color: var(--faint); margin-left: 4px; font-size: 11px; }
   .commit .msg { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .btns { display: flex; gap: 8px; margin-top: 18px; }
   .btn { all: unset; box-sizing: border-box; cursor: pointer; flex: 1; text-align: center; padding: 10px; border-radius: 10px; background: #2f6fed; color: #fff; font-weight: 650; }
@@ -151,7 +158,7 @@
   #prompt { position: fixed; left: 50%; bottom: 74px; transform: translate(-50%, 8px); opacity: 0; transition: .2s; padding: 10px 16px;
     font-size: 13.5px; font-weight: 650; pointer-events: none; white-space: nowrap; }
   #prompt.on { opacity: 1; transform: translate(-50%, 0); }
-  body.walking #side, body.walking #detail, body.walking #hint, body.walking .search, body.walking .chips { display: none !important; }
+  body.walking #tlBtn, body.walking #side, body.walking #detail, body.walking #hint, body.walking .search, body.walking .chips { display: none !important; }
   body.inside #top, body.inside #side, body.inside #detail, body.inside #hint, body.inside #labels,
   body.inside #tlpill, body.inside #tip, body.inside #flyBtn { display: none !important; }
   body:not(.inside) #inLabels { display: none; }
@@ -301,6 +308,7 @@
   <button class="tbtn panel" id="tlBtn" title="첫 커밋부터 도시가 지어지는 과정 (Space)" hidden>🎬 타임랩스</button>
   <button class="tbtn panel" id="skyBtn" title="낮/밤 (N)"></button>
   <button class="tbtn panel" id="labelBtn" title="폴더 이름표 켜기/끄기 (L)">🏷️ 이름표</button>
+  <button class="tbtn panel" id="shotBtn" title="지금 화면을 그림 파일로 저장">📸</button>
   <div class="chips" id="stats"></div>
   <label class="search panel">
     <span>🔍</span><input id="q" placeholder="파일 찾기" autocomplete="off" spellcheck="false"><span id="qcount">/</span>
@@ -1233,7 +1241,53 @@ const MODES = {
       <div class="grad-labels"><span>사람이 작성</span><span>Claude와 작성</span></div>
       <div class="legend-note">전체 커밋 ${fmt(N)}개 중 <b style="color:var(--claude)">${fmt(claudeCommits)}개(${Math.round((claudeCommits / Math.max(1, N)) * 100)}%)</b>가 Claude와 함께한 커밋</div>`,
   },
+  // 주인: 바꾼 줄 수가 가장 많은 사람의 색. 주인 지분이 절반이 안 되면(여럿이 나눠 가짐) 흐리게
+  owner: {
+    label: '👤 주인', git: true,
+    color: (f) => (f.ow ? ownerColor(f.ow[0]).clone().lerp(NONE, f.ow[1] < 50 ? 0.55 : 0) : NONE),
+    legend: () => `<div class="langs">${owners.slice(0, 7).map(([a, n]) =>
+      `<div class="lang"><i style="background:#${ownerColor(a).getHexString()}"></i>${esc(DATA.authors[a])}<span>${fmt(n)}채</span></div>`).join('')}</div>
+      <div class="legend-note">흐린 건물은 여러 사람이 나눠 가진 곳 · 도시 전체 버스 팩터 <b>${busFactor(files) ?? '–'}</b><br>(몇 명이 빠지면 절반 넘는 파일이 주인을 잃는지)</div>`,
+  },
+  // 버그 수정: 제목에 fix · bug · 버그 · 오류 등이 든 커밋이 몇 번 손댔는지 (CodeCharta 방식)
+  bugs: {
+    label: '🐞 버그 수정', git: true,
+    color: (f) => (f.fx ? ramp(HEAT, 0.25 + 0.75 * Math.log1p(f.fx) / bugMax) : NONE),
+    legend: () => `<div class="grad" style="background:${gradCss(HEAT.slice(2))}"></div>
+      <div class="grad-labels"><span>가끔</span><span>자주 고친 곳</span></div>
+      <div class="legend-note">버그 수정 커밋(제목에 fix · bug · 버그 · 오류 …)이 손댄 횟수. 회색은 한 번도 없음</div>`,
+  },
 };
+// 주인 색: 맡은 건물이 많은 사람부터 잘 구분되는 색을 준다
+const owners = (() => {
+  const n = new Map();
+  for (const f of files) if (f.ow) n.set(f.ow[0], (n.get(f.ow[0]) || 0) + 1);
+  return [...n].sort((a, b) => b[1] - a[1]);
+})();
+const OWNER_PALETTE = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2', '#edc948', '#ff9da7', '#9c755f', '#86bcb6'].map(C);
+const ownerRank = new Map(owners.map(([a], k) => [a, k]));
+const ownerColor = (a) => OWNER_PALETTE[(ownerRank.get(a) ?? a) % OWNER_PALETTE.length];
+const bugMax = Math.max(1, Math.log1p(Math.max(0, ...files.map((f) => f.fx || 0))));
+// 버스 팩터(트럭 팩터, 탐욕 근사): 주인 파일이 많은 사람부터 한 명씩 빼서, 주인 잃은 파일이 절반을 넘는 순간까지 뺀 사람 수
+// 구역(폴더) 안 건물들의 주인 · 버스 팩터 한 줄
+function districtOwners(node) {
+  const list = files.filter((f) => f.p.startsWith(node.path + '/'));
+  const bf = busFactor(list);
+  if (bf == null) return '';
+  const top = new Map();
+  for (const f of list) if (f.ow) top.set(f.ow[0], (top.get(f.ow[0]) || 0) + 1);
+  const [a, n] = [...top].sort((x, y) => y[1] - x[1])[0];
+  return ` · 주인 ${esc(DATA.authors[a])} ${Math.round((n / list.length) * 100)}% · 버스 팩터 <b${bf === 1 ? ' class="warn"' : ''}>${bf}</b>`;
+}
+function busFactor(list) {
+  const owned = list.filter((f) => f.ow);
+  if (!owned.length) return null;
+  const cnt = new Map();
+  for (const f of owned) cnt.set(f.ow[0], (cnt.get(f.ow[0]) || 0) + 1);
+  let orphan = 0, k = 0;
+  for (const [, n] of [...cnt].sort((a, b) => b[1] - a[1])) { orphan += n; k++; if (orphan > owned.length / 2) break; }
+  return k;
+}
 
 // 도시 풍경 팔레트
 // 같은 종류도 색이 넉넉히 갈리게: 주택은 크림 · 파스텔, 빌라는 벽돌 · 테라코타, 아파트는 파스텔, 오피스 · 마천루는 유리빛
@@ -1283,9 +1337,71 @@ function finish(f, base) {
   const c = base.clone();
   if (flash[f.i] > 0) c.lerp(FLASH, flash[f.i] * 0.85);
   if (state.matches && !state.matches.has(f.i)) c.multiplyScalar(0.18);
+  // 건물을 고르면 관계있는 건물만 또렷하게, 나머지는 살짝 어둡게 (focus + context)
+  if (rel && mode === 'orbit' && f.i !== state.selected) {
+    const k = rel.kind.get(f.i);
+    if (k) c.lerp(REL_COLOR[k], 0.35); else c.multiplyScalar(0.62);
+  }
   if (f.i === state.selected) c.lerp(WHITE, 0.22);
   if (f.i === state.hover) c.lerp(WHITE, 0.4);
   return c;
+}
+// 관계 색: 함께 바뀜(주황) · import 없이 함께 바뀜 = 숨은 의존(분홍) · 이 파일이 쓰는 곳(하늘) · 이 파일을 쓰는 곳(보라)
+const REL_COLOR = { cp: C('#ffa94d'), hidden: C('#ff6b9a'), dep: C('#5ad1ff'), used: C('#b48cff') };
+let rel = null; // { i, cp: [[j, 결합도%, 횟수, 숨은?]], dep: [j], used: [j], kind: Map(j → 종류) }
+function relationsOf(i) {
+  const f = files[i], kind = new Map();
+  const linked = (j) => f.dep.includes(j) || usedBy[i].includes(j);
+  const cp = (f.cp || []).map(([j, d, s]) => [j, d, s, !linked(j)]);
+  const dep = f.dep.slice(0, 14), used = usedBy[i].slice(0, 14);
+  for (const j of dep) kind.set(j, 'dep');
+  for (const j of used) kind.set(j, 'used');
+  for (const [j, , , hidden] of cp) kind.set(j, hidden ? 'hidden' : 'cp');
+  return { i, cp, dep, used, kind };
+}
+
+// 관계 아치: 고른 건물 지붕에서 상대 건물 지붕으로 — 굵기 = 결합도, 위를 따라 작은 빛이 흘러간다
+const arcGroup = new THREE.Group();
+scene.add(arcGroup);
+const arcPulses = [];
+let arcBuiltAt = 0;
+function clearArcs() {
+  for (const m of arcGroup.children) { m.geometry.dispose(); m.material.dispose(); }
+  arcGroup.clear();
+  arcPulses.length = 0;
+}
+function roofOf(f, side) {
+  const b = f.box || { w: 1, d: 1, h: 0.5 };
+  // 나가는 선은 지붕의 3/4, 들어오는 선은 1/4 지점에서 — 양방향 선이 겹치지 않게 (CodeCharta 방식)
+  return new THREE.Vector3(f.x + b.w * (side - 0.5) * 0.5, f.baseY + b.h + 0.05, f.z);
+}
+function buildArcs() {
+  clearArcs();
+  if (!rel || mode !== 'orbit') return;
+  const a = files[rel.i];
+  if (!a.box) return;
+  const add = (j, color, radius, out, speed) => {
+    const b = files[j];
+    if (!b.box) return;
+    const p0 = roofOf(a, out ? 0.75 : 0.25), p2 = roofOf(b, out ? 0.25 : 0.75);
+    const d = p0.distanceTo(p2), mid = p0.clone().add(p2).multiplyScalar(0.5);
+    mid.y = Math.max(p0.y, p2.y) + 1 + d * 0.32;
+    const curve = new THREE.QuadraticBezierCurve3(p0, mid, p2);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 32, radius, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, depthWrite: false }));
+    arcGroup.add(tube);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(radius * 2.4, 10, 8), new THREE.MeshBasicMaterial({ color: WHITE }));
+    arcGroup.add(dot);
+    arcPulses.push({ dot, curve: out ? curve : null, back: out ? null : curve, speed, ph: Math.random() });
+  };
+  for (const j of rel.dep) add(j, REL_COLOR.dep, 0.06, true, 0.5);
+  for (const j of rel.used) add(j, REL_COLOR.used, 0.06, false, 0.5);
+  for (const [j, d, , hidden] of rel.cp) add(j, hidden ? REL_COLOR.hidden : REL_COLOR.cp, 0.05 + 0.13 * (d / 100), true, 0.35);
+}
+function moveArcs(time) {
+  for (const p of arcPulses) {
+    const t = (time * p.speed + p.ph) % 1;
+    p.dot.position.copy(p.curve ? p.curve.getPoint(t) : p.back.getPoint(1 - t));
+  }
 }
 function updateColors() {
   colorsDirty = false;
@@ -1353,7 +1469,7 @@ function renderPill(count) {
 const SPEEDS = [[12, '1×'], [30, '2×'], [80, '4×'], [4, '½×']];
 let pillTimer;
 function setPlaying(on) {
-  if (!HAS_GIT || (on && mode === 'inside')) return;
+  if (!HAS_GIT || (on && mode !== 'orbit')) return;
   state.playing = on;
   clearTimeout(pillTimer);
   if (on) {
@@ -1528,6 +1644,7 @@ function moveStreets(dt, time) {
   // 타임랩스 중엔 그 시점 커밋 수만큼만 차가 다닌다
   const progress = state.time >= N ? 1 : Math.sqrt((state.time + 1) / N);
   const activeCars = Math.round(cars.length * progress);
+  collectObstacles();
   cars.forEach((c, k) => {
     if (k >= activeCars) {
       c.active = false;
@@ -1558,9 +1675,9 @@ function moveStreets(dt, time) {
   for (const m of CAR_PARTS) m.instanceMatrix.needsUpdate = true;
   const activePeople = Math.round(people.length * progress);
   people.forEach((p, k) => {
-    if (k >= activePeople) { hidePerson(k); return; }
+    if (k >= activePeople) { crossers.delete(p); hidePerson(k); return; }
     const at = walkPerson(p, dt);
-    if (!at) { hidePerson(k); return; }
+    if (!at) { crossers.delete(p); hidePerson(k); return; }
     const [x, y, z, yaw, scale, moving] = at;
     // 한 걸음 = 키의 0.5배 → 위상 속도 = π · 속도 / 보폭
     p.step = (p.step || p.phase) + (moving ? dt * Math.PI * (p.state === 'cross' ? 1.35 : 1) * p.speed / (0.5 * p.size) : 0);
@@ -1581,8 +1698,16 @@ for (const c of cars) {
 function distToCorner(r, s, dir) {
   const cs = cornerS(r);
   if (dir > 0) { for (let i = 0; i < 4; i++) if (cs[i] > s + 1e-6) return [cs[i] - s, i]; return [r.len - s, 0]; }
+  if (s <= 1e-6) s = r.len; // 0 번 모서리에 서 있으면 고리 끝으로 보고 그 앞 모서리로 (제자리걸음 방지)
   for (let i = 3; i >= 0; i--) if (cs[i] < s - 1e-6) return [s - cs[i], i];
   return [s, 0];
+}
+// 차가 피할 것: 건너는 사람 · 걷는 주인공 (프레임마다 한 번 모은다)
+const obstacles = [];
+function collectObstacles() {
+  obstacles.length = 0;
+  for (const p of crossers) obstacles.push([p.cx, p.cz]);
+  if (mode === 'walk' && world === CITY) obstacles.push([walk.pos.x, walk.pos.z]);
 }
 function driveCar(c, dt, time) {
   const r = c.ring;
@@ -1602,8 +1727,6 @@ function driveCar(c, dt, time) {
   // 앞길(모퉁이를 도는 길 포함)에 건너는 사람 · 걷고 있는 주인공이 있으면 그 앞에서 선다
   const [x, z] = onRing(r, c.s, c.lane);
   c.x = x; c.z = z;
-  const obstacles = [...crossers].map((p) => [p.cx, p.cz]);
-  if (mode === 'walk' && world === CITY) obstacles.push([walk.pos.x, walk.pos.z]);
   if (obstacles.length) {
     for (let d = 0.9; d <= 4.5; d += 0.6) {
       const [ax, az] = onRing(r, (c.s + c.dir * d + r.len * 2) % r.len, c.lane);
@@ -2035,12 +2158,28 @@ function renderDetail() {
       <div class="stat"><small>최근 90일</small><b>${HAS_GIT ? fmt(f.r90) : '–'}</b></div>
     </div>`;
   if (f.wip) html += `<div class="kv"><span>공사 중</span><span>아직 커밋 안 된 변경이 있어요</span></div>`;
-  html += `<div class="kv"><span>연결</span><span>쓰는 곳 ${f.dep.length} · 쓰이는 곳 ${usedBy[f.i].length}</span></div>`;
+  // 관계: 함께 바뀌는 파일 · 쓰는 곳 · 쓰이는 곳 (누르면 그 건물로)
+  const relRow = (j, color, right) => `<button class="rel" data-go="${j}"><i style="background:#${color.getHexString()}"></i><span>${esc(files[j].name)}</span><small>${right}</small></button>`;
+  if (f.cp?.length) {
+    html += `<div class="sect-title">🔗 함께 바뀌는 파일 <span class="sub">같은 커밋에 자주 같이 들어감</span></div>
+      ${f.cp.map(([j, d, s]) => {
+        const hidden = !f.dep.includes(j) && !usedBy[f.i].includes(j);
+        return relRow(j, hidden ? REL_COLOR.hidden : REL_COLOR.cp, `${d}% · ${s}번${hidden ? ' · <b class="warn">숨은 의존</b>' : ''}`);
+      }).join('')}`;
+  }
+  if (f.dep.length || usedBy[f.i].length) {
+    html += `<div class="sect-title">📦 연결 <span class="sub">쓰는 곳 ${f.dep.length} · 쓰이는 곳 ${usedBy[f.i].length}</span></div>
+      ${f.dep.slice(0, 6).map((j) => relRow(j, REL_COLOR.dep, '쓰는 곳')).join('')}
+      ${usedBy[f.i].slice(0, 6).map((j) => relRow(j, REL_COLOR.used, '쓰이는 곳')).join('')}`;
+  } else html += `<div class="kv"><span>연결</span><span>쓰는 곳 0 · 쓰이는 곳 0</span></div>`;
   if (f.ch) {
     html += `
       <div class="kv"><span>마지막 수정</span><span>${ago(f.lt)} · ${ymd(f.lt)}</span></div>
       <div class="kv"><span>처음 등장</span><span>${ymd(f.ft)}</span></div>
       <div class="kv"><span>작성자</span><span>${f.au.map(([a, n]) => `${esc(DATA.authors[a])} ${n}`).join(', ')}</span></div>
+      ${f.ow ? `<div class="kv"><span>👤 주인</span><span>${esc(DATA.authors[f.ow[0]])} ${f.ow[1]}%${f.na > 1 ? ` · 손댄 사람 ${f.na}명` : ''}</span></div>` : ''}
+      <div class="kv"><span>최근 90일 변경량</span><span>${fmt(f.c90 || 0)}줄</span></div>
+      ${f.fx ? `<div class="kv"><span>🐞 버그 수정 커밋</span><span>${fmt(f.fx)}번 (${Math.round((f.fx / f.ch) * 100)}%)</span></div>` : ''}
       <div class="kv" style="display:block"><div style="display:flex;justify-content:space-between">
         <span style="color:var(--muted)">🤖 Claude와 함께한 커밋</span><span>${aiPct}%</span></div>
         <div class="meter"><i style="width:${aiPct}%"></i></div></div>
@@ -2056,6 +2195,7 @@ function renderDetail() {
   el.innerHTML = html;
   el.hidden = false;
   el.querySelector('.close').onclick = () => select(-1);
+  el.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => select(+b.dataset.go, true)));
   el.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     if (b.dataset.act === 'enter') enterBuilding(f);
     else BRIDGE[b.dataset.act === 'open' ? 'openFile' : 'revealFile'](f.p);
@@ -2064,9 +2204,20 @@ function renderDetail() {
 
 function select(i, fly) {
   state.selected = i;
+  rel = i >= 0 ? relationsOf(i) : null;
+  if (rel && !rel.cp.length && !rel.dep.length && !rel.used.length) rel = null;
+  buildArcs();
   colorsDirty = true;
   renderDetail();
-  if (i >= 0 && fly) frameBuilding(files[i]);
+  if (i >= 0 && fly) rel ? frameRelated(rel) : frameBuilding(files[i]);
+}
+// 관계 아치가 있으면 고른 건물과 상대 건물들이 한 화면에 들어오게
+function frameRelated(r) {
+  const ids = [r.i, ...r.dep, ...r.used, ...r.cp.map((c) => c[0])];
+  const a = files[r.i], target = new THREE.Vector3(a.x, a.baseY + (a.box?.h || 1) * 0.4, a.z);
+  let R = 0;
+  for (const j of ids) R = Math.max(R, Math.hypot(files[j].x - a.x, files[j].z - a.z));
+  tweenCamera(viewFrom(target, clamp(R * 1.7 + 12, 14, S * 1.2), 0.7), target, 1.1, { cancellable: true });
 }
 
 $('#q').addEventListener('input', (e) => {
@@ -2268,7 +2419,7 @@ function pick() {
   } else if (hoverDist > 0) {
     const n = districts[hoverDist].node;
     tip.innerHTML = `<b>📍 ${esc(n.name)}</b><div class="p">${esc(n.path)}</div>
-      <div class="m">건물 ${fmt(n.count)}채 · ${fmt(n.lines)}줄 · 클릭하면 확대</div>`;
+      <div class="m">건물 ${fmt(n.count)}채 · ${fmt(n.lines)}줄${HAS_GIT ? districtOwners(n) : ''} · 클릭하면 확대</div>`;
     tip.hidden = false;
   } else tip.hidden = true;
 }
@@ -2420,7 +2571,8 @@ function spawnPoint(near) {
   }
   return best || [0, S / 2 + 4];
 }
-async function startWalk() {
+const startWalk = (...a) => exclusive(() => startWalkNow(...a));
+async function startWalkNow() {
   if (mode !== 'orbit') return;
   setPlaying(false);
   select(-1);
@@ -2444,7 +2596,8 @@ async function startWalk() {
   await tweenCamera(pos, look, 1.5);
   walk.ready = true;
 }
-async function stopWalk() {
+const stopWalk = (...a) => exclusive(() => stopWalkNow(...a));
+async function stopWalkNow() {
   if (mode !== 'walk') return;
   walk.ready = false;
   walk.keys.clear();
@@ -2468,6 +2621,13 @@ const CITY = {
 };
 let world = CITY;
 const walking = () => mode === 'walk' || mode === 'inside';
+// 화면 전환(걷기 시작 · 끝, 건물 들어가기 · 나가기, 층 이동)은 한 번에 하나만 — 키를 연달아 눌러도 겹치지 않게
+let busy = false;
+async function exclusive(fn) {
+  if (busy) return;
+  busy = true;
+  try { return await fn(); } finally { busy = false; }
+}
 const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
 
 function updateWalk(dt, time) {
@@ -2843,6 +3003,7 @@ function loadHljs() {
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
     s.onload = () => res(window.hljs);
     s.onerror = () => res(null);
+    setTimeout(() => res(window.hljs || null), 5000); // 인터넷이 느리면 색 없이라도 먼저 보여 준다
     document.head.appendChild(s);
   }));
 }
@@ -2970,7 +3131,7 @@ function buildFloor(fl) {
   const rows = () => Math.max(1, Math.floor((D - BACK - FRONT) / CELL));
   const wallSlots = () => 2 * Math.max(0, Math.floor((D - BACK - FRONT - 0.4) / 1.7));
   const need = floorIt.reduce((s, o) => s + (o.kind === 'class' ? 2 : 1), 0) + nDecor;
-  for (let k = 0; k < 60 && (cols() * 2 * rows() < need || wallSlots() < wallIt.length); k++) { if (W < D + 4) W += CELL; else D += CELL; }
+  for (let k = 0; k < 60 && (cols() * 2 * rows() < need || wallSlots() < wallIt.length || (hasClass && rows() < 2)); k++) { if (W < D + 4) W += CELL; else D += CELL; }
   FL.W = W; FL.D = D;
   const zFront = D / 2 - FRONT, z0 = -D / 2 + BACK;
 
@@ -3192,7 +3353,8 @@ function updateInteriorLight() {
 }
 
 // 층 이동 (엘리베이터 · 계단)
-async function travelTo(fl, via) {
+const travelTo = (...a) => exclusive(() => travelToNow(...a));
+async function travelToNow(fl, via) {
   if (fl < 1 || fl > insideFloors) return;
   closeElevator();
   walk.ready = false;
@@ -3255,7 +3417,8 @@ $('#monWhole').addEventListener('click', () => openItem && openCode(openItem, $(
 $('#monClose').addEventListener('click', closeCode);
 
 // 들어가기 · 나가기
-async function enterBuilding(f) {
+const enterBuilding = (...a) => exclusive(() => enterBuildingNow(...a));
+async function enterBuildingNow(f) {
   if (mode === 'inside' || !f.box) return;
   setPlaying(false);
   insideFrom = mode;
@@ -3300,9 +3463,12 @@ async function showInside(f) {
   closeElevator();
   $('#board').classList.remove('open');
   const [text, hljs] = await Promise.all([getSource(f), loadHljs()]);
+  if (insideFile !== f || mode !== 'inside') return; // 기다리는 사이 나갔거나 다른 건물로 갔다
   insideText = text;
   insideHljs = hljs;
-  insideOutline = text == null ? [] : withRanges(outlineOf(text.replace(/\r\n?/g, '\n'), f.lang), f.l);
+  // 앱은 코드를 디스크에서 바로 읽으므로 스캔 뒤 파일이 길어졌을 수 있다 — 실제 줄 수로 범위를 잡는다
+  const norm = text == null ? null : text.replace(/\r\n?/g, '\n');
+  insideOutline = norm == null ? [] : withRanges(outlineOf(norm, f.lang), Math.max(f.l, norm.split('\n').length));
   renderBoard(f, text == null ? '' : introOf(text), insideOutline);
   buildFloor(1);
   placeAvatarInside(0, FL.D / 2 - 1.2, Math.PI);
@@ -3463,18 +3629,19 @@ $('#board').addEventListener('click', async (e) => {
   const it = e.target.closest('[data-line]');
   if (it) {
     const line = +it.dataset.line, fl = floorOfLine(line);
+    $('#board').classList.remove('open'); // 안내판은 닫고 그 층으로
     if (fl !== FL.n) await travelTo(fl, 'elev');
     openCode(insideOutline.find((o) => o.line === line) || itemsOnFloor(fl)[0]);
     return;
   }
   const go = e.target.closest('[data-go]');
-  if (go) { // 연결된 건물로 바로 이동 (엘리베이터처럼 짧게 암전)
+  if (go) exclusive(async () => { // 연결된 건물로 바로 이동 (엘리베이터처럼 짧게 암전)
     walk.ready = false;
     await fade(1);
     await showInside(files[+go.dataset.go]);
     await fade(0);
     walk.ready = true;
-  }
+  });
 });
 $('#inOpen').addEventListener('click', () => insideFile && BRIDGE?.openFile(insideFile.p));
 $('#inExit').addEventListener('click', () => exitBuilding());
@@ -3489,7 +3656,8 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   }
 });
 
-async function exitBuilding() {
+const exitBuilding = (...a) => exclusive(() => exitBuildingNow(...a));
+async function exitBuildingNow() {
   if (mode !== 'inside') return;
   walk.ready = false;
   walk.keys.clear();
@@ -3586,6 +3754,7 @@ function updateInterior(dt, time) {
 const WALK_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight']);
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.repeat && (e.code === 'KeyE' || e.key === 'Escape')) return;
   if (mode === 'inside') {
     const panelOpen = $('#elevPanel').classList.contains('open');
     if (WALK_KEYS.has(e.code) && !panelOpen) { walk.keys.add(e.code); e.preventDefault(); }
@@ -3619,9 +3788,40 @@ addEventListener('blur', () => walk.keys.clear());
 
 // ───────────────────────── 시작 ─────────────────────────
 const CAM_KEY = `cc-cam-${DATA.root}`;
+// 보던 상태도 함께 남긴다 — 앱이 커밋 · 수정을 보고 도시를 다시 그릴 때(#live) 걷기 · 건물 안 · 열어 둔 코드로 돌아오게
+const VIEW_KEY = `cc-view-${DATA.root}`;
 setInterval(() => {
   if (mode === 'orbit') store.set(CAM_KEY, JSON.stringify([...camera.position.toArray(), ...controls.target.toArray()]), true);
+  if (busy) return;
+  store.set(VIEW_KEY, JSON.stringify({
+    mode, from: insideFrom, sel: state.selected >= 0 ? files[state.selected].p : null,
+    walk: [walk.pos.x, walk.pos.z, walk.heading],
+    inside: mode === 'inside' && insideFile ? { p: insideFile.p, fl: FL.n, code: openItem?.line ?? null } : null,
+  }), true);
 }, 1000);
+async function restoreView() {
+  let v = null;
+  try { v = JSON.parse(store.get(VIEW_KEY)); } catch {}
+  if (!v) return;
+  const byPath = (p) => files.find((f) => f.p === p);
+  const backToWalk = v.mode === 'walk' || (v.mode === 'inside' && v.from === 'walk');
+  if (backToWalk) {
+    await startWalk();
+    if (v.mode === 'walk' && !blocked(v.walk[0], v.walk[1])) {
+      walk.pos.set(v.walk[0], groundAt(v.walk[0], v.walk[1]), v.walk[1]);
+      walk.heading = v.walk[2];
+      walk.yaw = walk.heading + Math.PI;
+    }
+  } else if (v.sel) { const f = byPath(v.sel); if (f) select(f.i); }
+  const f = v.inside && byPath(v.inside.p);
+  if (f && f.box) {
+    await enterBuilding(f);
+    if (v.inside.fl > 1) await travelTo(Math.min(v.inside.fl, insideFloors), 'elev');
+    if (!INSIDE.blocked(v.walk[0], v.walk[1])) placeAvatarInside(v.walk[0], v.walk[1], v.walk[2]);
+    const it = v.inside.code != null && insideOutline.find((o) => o.line === v.inside.code);
+    if (it) openCode(it);
+  }
+}
 
 // 주소 해시: #mode=claude&time=120&select=gamePage&play=1&live=1&sky=night
 const hash = new URLSearchParams(location.hash.slice(1));
@@ -3657,6 +3857,7 @@ if (hash.has('select')) {
   }
 }
 if (hash.has('walk')) setTimeout(startWalk, 2200);
+else if (live) restoreView();
 if (HAS_GIT && hash.get('play') === '1' && state.time < N) setPlaying(true);
 if (hash.get('toast')) toast(hash.get('toast'));
 
@@ -3704,13 +3905,14 @@ renderer.setAnimationLoop(() => {
       moved = true;
     }
   }
-  if (moved) flushBuildings();
+  if (moved) { flushBuildings(); if (rel && time - (arcBuiltAt || 0) > 0.3) { buildArcs(); arcBuiltAt = time; } }
   if (colorsDirty) updateColors();
 
   stepSkyHour(dt);
   applySky(time);
   moveStreets(dt, time);
   moveCritters(dt, time);
+  moveArcs(time);
   updateSignals(time);
   moveCranes(time);
   for (const c of clouds) {
@@ -3734,9 +3936,25 @@ renderer.setAnimationLoop(() => {
 
   if (mode === 'orbit' && (mouseDirty || moved || tween)) { pick(); mouseDirty = false; }
   if (night > 0.03) composer.render(); else renderer.render(scene, camera);
+  if (shotPending) saveShot();
   updateLabels();
 });
 
+// 📸 지금 화면 저장 — 그린 직후(같은 프레임)에 캔버스를 PNG 로 받는다
+let shotPending = false;
+$('#shotBtn').addEventListener('click', () => { shotPending = true; });
+function saveShot() {
+  shotPending = false;
+  renderer.domElement.toBlob((blob) => {
+    if (!blob) return;
+    const a = document.createElement('a'), d = new Date(), p = (n) => String(n).padStart(2, '0');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${DATA.name}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('📸 화면을 저장했어요');
+  }, 'image/png');
+}
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
