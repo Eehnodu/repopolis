@@ -1,6 +1,6 @@
 {
   "name": "repopolis",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "코드가 사는 도시 — 프로젝트 폴더를 살아 움직이는 3D 도시로",
   "author": "Eehnodu",
   "license": "MIT",
@@ -24,10 +24,37 @@
     "appId": "com.eehnodu.repopolis",
     "productName": "Repopolis",
     "asar": false,
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["app/**", "scan.js", "viewer.html", "package.json"],
-    "win": { "target": [{ "target": "portable", "arch": ["x64"] }], "icon": "build/icon.png" },
-    "portable": { "artifactName": "Repopolis-windows.exe" },
-    "mac": { "target": ["dir"], "icon": "build/icon.png", "identity": null, "category": "public.app-category.developer-tools" }
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "app/**",
+      "scan.js",
+      "viewer.html",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "portable": {
+      "artifactName": "Repopolis-windows.exe"
+    },
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "icon": "build/icon.png",
+      "identity": null,
+      "category": "public.app-category.developer-tools"
+    }
   }
 }

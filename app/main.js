@@ -372,6 +372,7 @@ handle('notify-set', (_, on) => setNotify(on));
 // ───────── 창 ─────────
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', showMain);
+app.on('activate', showMain); // 맥: 창을 닫은 뒤 Dock 아이콘을 누르면 다시
 app.on('before-quit', () => { app.isQuitting = true; });
 if (process.platform === 'win32') app.setAppUserModelId('com.repopolis.app');
 
