@@ -385,9 +385,10 @@
 
 <div id="walkHud" class="panel" hidden>
   <span class="hk"><kbd>W</kbd><kbd>S</kbd> 앞뒤 <kbd>A</kbd><kbd>D</kbd> 돌기</span>
-  <span class="hk2"><kbd>Shift</kbd> 달리기</span>
+  <span class="hk2"><kbd>Shift</kbd> 달리기 <kbd>Space</kbd> 점프</span>
   <span class="hm">드래그 돌기 · 우클릭 둘러보기 · 휠 거리</span>
   <span class="hk2"><kbd>E</kbd> 들어가기</span>
+  <button class="tbtn panel" id="sitBtn" style="height:32px" title="앉기 / 일어서기 (C) — 가까운 벤치 · 의자 · 소파, 없으면 바닥"></button>
   <button class="tbtn panel" id="viewBtn" style="height:32px" title="1인칭 / 3인칭 (V)"></button>
   <button class="tbtn panel" id="flyBtn" style="height:32px" title="하늘로 (Esc)"><span class="ic">🚁</span><span class="t">하늘로</span><kbd style="margin-left:4px">Esc</kbd></button>
 </div>
@@ -2071,6 +2072,28 @@ props.planter.forEach(({ x, y, z, yaw }, k) => {
   }
 });
 
+// 올라설 수 있는 받침: [x, z, cos, sin, 반폭, 반깊이, 윗면 높이] — 벤치 · 휴지통 · 소화전 · 화분
+const PLAT_CELL = 2, platGrid = new Map();
+function addPlat(x, z, yaw, hw, hd, top) {
+  const p = [x, z, Math.cos(yaw), Math.sin(yaw), hw, hd, top], m = Math.max(hw, hd) + 0.3;
+  for (let gx = Math.floor((x - m) / PLAT_CELL); gx <= Math.floor((x + m) / PLAT_CELL); gx++)
+    for (let gz = Math.floor((z - m) / PLAT_CELL); gz <= Math.floor((z + m) / PLAT_CELL); gz++) {
+      const key = gx * 100003 + gz;
+      if (!platGrid.has(key)) platGrid.set(key, []);
+      platGrid.get(key).push(p);
+    }
+}
+props.bench.forEach(({ x, y, z, yaw }) => addPlat(x, z, yaw, 0.46 * PK, 0.17 * PK, y + 0.36 * PK));
+props.bin.forEach(({ x, y, z }) => addPlat(x, z, 0, 0.12, 0.12, y + 0.46 * 0.75 + 0.01));
+props.hydrant.forEach(({ x, y, z }) => addPlat(x, z, 0, 0.075, 0.075, y + 0.42 * 0.65));
+props.planter.forEach(({ x, y, z, yaw }) => addPlat(x, z, yaw, 0.31 * 0.7, 0.15 * 0.7, y + 0.14 * 0.7));
+// 받침 p 의 바닥면이 (x, z) 를 m 만큼 넓혀 덮는가 (돌려 놓은 사각형)
+function platCovers(p, x, z, m) {
+  const dx = x - p[0], dz = z - p[1];
+  return Math.abs(dx * p[2] - dz * p[3]) < p[4] + m && Math.abs(dx * p[3] + dz * p[2]) < p[5] + m;
+}
+const platsNear = (x, z) => platGrid.get(Math.floor(x / PLAT_CELL) * 100003 + Math.floor(z / PLAT_CELL)) || NO_CARS;
+
 // 🐦 새 떼 — 도시 위를 크게 돌며 날갯짓
 const FLOCKS = Math.max(2, Math.min(4, Math.round(S / 40))), PER_FLOCK = 7;
 const birds = Array.from({ length: FLOCKS * PER_FLOCK }, (_, k) => {
@@ -2649,7 +2672,7 @@ function pick() {
 // ───────────────────────── 🚶 걷기 ─────────────────────────
 const R_AVATAR = 0.28;
 // yaw: 카메라가 캐릭터 뒤 어느 쪽에 있는지 / heading: 캐릭터가 바라보는 방향 — 카메라는 heading 을 따라 등 뒤로 돈다
-const walk = { pos: new THREE.Vector3(), yaw: 0, pitch: 0.32, look: 0.08, dist: 4.2, scale: SCALE_CITY, v: 0, heading: 0, swing: 0, phase: 0, back: 1,
+const walk = { pos: new THREE.Vector3(), jy: 0, vy: 0, yaw: 0, pitch: 0.32, look: 0.08, dist: 4.2, scale: SCALE_CITY, v: 0, heading: 0, swing: 0, phase: 0, back: 1,
   fp: store.get('cc-view') === 'fp', keys: new Set(), near: null, drag: null, ready: false };
 const EYE_H = BODY.headY - 0.01;
 // 주인공: 초록 곰귀 후드 (외곽선 없이 발밑 고리로 구분)
@@ -2698,8 +2721,8 @@ function nearestBuilding(x, z) {
   }
   return best;
 }
-const headPos = () => walk.pos.clone().setY(walk.pos.y + 0.72 * walk.scale);
-const eyePos = () => walk.pos.clone().setY(walk.pos.y + EYE_H * walk.scale).add(new THREE.Vector3(Math.sin(walk.heading), 0, Math.cos(walk.heading)).multiplyScalar(0.14 * walk.scale));
+const headPos = () => walk.pos.clone().setY(walk.pos.y + (walk.sitDy || 0) + 0.72 * walk.scale);
+const eyePos = () => walk.pos.clone().setY(walk.pos.y + (walk.jy || 0) + (walk.sitDy || 0) + EYE_H * walk.scale).add(new THREE.Vector3(Math.sin(walk.heading), 0, Math.cos(walk.heading)).multiplyScalar(0.14 * walk.scale));
 // 지금 시점(1인칭 / 3인칭)에서 카메라가 있어야 할 곳과 바라볼 점
 function walkCamDesired() {
   if (walk.fp) {
@@ -2753,6 +2776,8 @@ async function startWalkNow() {
   tip.hidden = true;
   const [x, z] = spawnPoint(controls.target);
   walk.pos.set(x, groundAt(x, z), z);
+  walk.jy = walk.vy = 0;
+  walk.sit = null; walk.sitT = 0; renderSitBtn();
   walk.yaw = Math.atan2(camera.position.x - x, camera.position.z - z);
   walk.heading = walk.yaw + Math.PI;
   walk.pitch = 0.32;
@@ -2789,6 +2814,9 @@ async function stopWalkNow() {
 // 걷는 세계: 도시 / 건물 안이 같은 조작 · 카메라를 쓰고 충돌 · 바닥 · 상호작용만 다르다
 const CITY = {
   blocked, groundAt, occluders: [facade, plain, roofs],
+  // 발이 닿는 높이(reach)보다 높은 받침이 반경 r 안에 있으면 막힌다 / reach 보다 낮은 받침 중 가장 높은 윗면
+  solid: (x, z, reach, r) => platsNear(x, z).some((p) => p[6] > reach && platCovers(p, x, z, r)),
+  topAt: (x, z, reach, m) => platsNear(x, z).reduce((top, p) => (p[6] <= reach && p[6] > top && platCovers(p, x, z, m) ? p[6] : top), 0),
   near: (x, z) => nearestBuilding(x, z),
   prompt: (f) => `<kbd>E</kbd> ${TYPES[f.curType].icon} <b>${esc(f.name)}</b> 들어가기 <span style="color:var(--muted);font-weight:500">· ${f.box.floors}층</span>`,
   act: (f) => enterBuilding(f),
@@ -2814,18 +2842,24 @@ function updateWalk(dt, time) {
     if (k.has('KeyA') || k.has('ArrowLeft')) turn += 1;
     if (k.has('KeyD') || k.has('ArrowRight')) turn -= 1;
   }
+  if (walk.sit && (fwd || turn || walk.jumpQ)) { standUp(); walk.jumpQ = false; }
+  if (walk.sit) { fwd = 0; turn = 0; walk.v = 0; }
   const run = k.has('ShiftLeft') || k.has('ShiftRight');
   walk.heading += turn * (run ? 2.4 : 2.0) * dt;
   // 속도는 키 기준(초당 키의 몇 배) — 걷기 2.2배 · 달리기 5배 · 뒷걸음 1.1배. 바로 붙지 않고 가감속한다
   const H = walk.scale, want = (fwd > 0 ? (run ? 5 : 2.2) : fwd < 0 ? -1.1 : 0) * H;
   walk.v = (walk.v || 0) + clamp(want - (walk.v || 0), -7 * H * dt, (run ? 6 : 4.5) * H * dt);
+  // 발 높이보다 한 걸음(키의 0.2배) 넘게 높은 것에는 막히고, 그보다 낮으면 올라선다 (점프하면 더 높은 데도)
+  const feet = walk.pos.y + walk.jy, reach = feet + 0.2 * H;
+  const stuck = world.solid(walk.pos.x, walk.pos.z, reach, R_AVATAR * H * 0.7);
+  const stop = (x, z) => world.blocked(x, z) || (!stuck && world.solid(x, z, reach, R_AVATAR * H * 0.7));
   if (Math.abs(walk.v) > 1e-3) {
     const sp = walk.v * dt;
     const ix = Math.sin(walk.heading) * sp, iz = Math.cos(walk.heading) * sp;
     const px = walk.pos.x, pz = walk.pos.z, nx = px + ix, nz = pz + iz;
-    if (!world.blocked(nx, nz)) { walk.pos.x = nx; walk.pos.z = nz; }
-    else if (!world.blocked(nx, pz)) walk.pos.x = nx;
-    else if (!world.blocked(px, nz)) walk.pos.z = nz;
+    if (!stop(nx, nz)) { walk.pos.x = nx; walk.pos.z = nz; }
+    else if (!stop(nx, pz)) walk.pos.x = nx;
+    else if (!stop(px, nz)) walk.pos.z = nz;
     else walk.v *= 0.5;
   }
   // 발걸음: 위상을 속도에 맞춰(빠를수록 보폭도 커진다) 발이 미끄러지지 않게
@@ -2833,16 +2867,32 @@ function updateWalk(dt, time) {
   walk.phase += dt * Math.PI * (speedH / strideOf(speedH)) * Math.sign(walk.v || 1);
   // 발이 땅에 닿을 때마다(위상 π 마다) 발소리
   const foot = Math.floor(walk.phase / Math.PI);
-  if (foot !== walk.foot) { if (walk.swing > 0.35 && walk.ready) sfx.step(world !== CITY, speedH > 3); walk.foot = foot; }
+  if (foot !== walk.foot) { if (walk.swing > 0.35 && walk.ready && !walk.jy) sfx.step(world !== CITY, speedH > 3); walk.foot = foot; }
   const spin = !fwd && turn && speedH < 0.3;
   if (spin) walk.phase += dt * 9; // 제자리에서 돌 땐 발만 콩콩
   const stepping = clamp(speedH / 2.2, 0, 1) + clamp((speedH - 2.2) / 2.8, 0, 1) * 0.4 + (spin ? 0.35 : 0);
   walk.swing += (stepping - walk.swing) * Math.min(1, dt * 8);
-  walk.pos.y += (world.groundAt(walk.pos.x, walk.pos.z) - walk.pos.y) * Math.min(1, dt * 14);
+  // 발밑: 바닥과, 발보다 낮은 받침(벤치 · 상자 …) 중 높은 쪽. 공중에선 절대 높이를 지키고, 받침 끝을 벗어나면 떨어진다
+  const under = Math.max(world.groundAt(walk.pos.x, walk.pos.z), world.topAt(walk.pos.x, walk.pos.z, reach, R_AVATAR * H * 0.9));
+  if (walk.jy > 0 || walk.vy) { const abs = walk.pos.y + walk.jy; walk.pos.y = under; walk.jy = abs - under; }
+  else if (under < walk.pos.y - 0.05 * H) { walk.jy = walk.pos.y - under; walk.pos.y = under; }
+  else walk.pos.y += (under - walk.pos.y) * Math.min(1, dt * 14);
+  // 점프(Space): 키의 0.7배쯤 뛰어오른다. 공중에서도 가던 방향 · 속도 그대로, 착지하면 찌그러졌다 돌아온다
+  if (walk.jumpQ && walk.ready && !walk.jy && !walk.vy) { walk.vy = 4.8 * H; sfx.jump(); }
+  walk.jumpQ = false;
+  if (walk.vy || walk.jy > 0) {
+    walk.vy -= 16 * H * dt;
+    walk.jy += walk.vy * dt;
+    if (walk.jy <= 0 && walk.vy <= 0) { const hard = walk.vy < -2 * H; walk.jy = 0; walk.vy = 0; walk.land = hard ? 1 : 0.5; if (under > world.groundAt(walk.pos.x, walk.pos.z) + 0.01) walk.v *= 0.2; /* 받침 위엔 착 붙는다 */ if (walk.ready) sfx.step(world !== CITY, true); }
+    else if (walk.jy < 0) walk.jy = 0;
+  }
+  walk.land = Math.max(0, (walk.land || 0) - dt * 5);
+  const air = clamp(walk.jy / (0.12 * H), 0, 1);
   // 3인칭 카메라는 마우스로 돌려 놓았어도 걷기 시작하면 다시 등 뒤로 돌아온다
   if (!walk.drag) walk.yaw = lerpAngle(walk.yaw, walk.heading + Math.PI, 1 - Math.exp(-dt * (fwd || turn ? 5 : 1.5)));
 
   avatar.position.copy(walk.pos);
+  avatar.position.y += walk.jy;
   avatar.rotation.y = walk.heading;
   avatar.scale.setScalar(H);
   // 손발이 떠 있는 걸음 + 속도만큼 앞으로 기울고(돌 땐 안쪽으로), 발이 닿을 때 살짝 찌그러지고, 서 있으면 숨 쉰다
@@ -2850,14 +2900,45 @@ function updateWalk(dt, time) {
   poseHoodie(ud, walk.phase, sw, time);
   body.rotation.x = walk.v > 0 ? clamp(speedH / 5, 0, 1) * 0.18 : 0;
   body.rotation.z += turn * clamp(speedH / 2.2, 0, 1) * 0.08;
-  const squash = (1 - Math.cos(2 * walk.phase)) * 0.5 * 0.04 * Math.min(1, sw), breathe = Math.sin(time * 2) * 0.012 * (1 - Math.min(1, sw));
+  // 공중: 발은 접어 올리고 손은 번쩍, 오를 땐 길쭉하게
+  if (air > 0) for (let k = 0; k < 2; k++) {
+    const side = k ? 1 : -1, f = ud.feet[k], hd = ud.hands[k];
+    f.position.y += 0.07 * air;
+    f.position.z += ((k ? -0.04 : 0.07) - f.position.z) * air;
+    f.rotation.x += (-0.35 - f.rotation.x) * air;
+    hd.position.y += 0.2 * air;
+    hd.position.x += side * 0.05 * air;
+  }
+  const squash = (1 - Math.cos(2 * walk.phase)) * 0.5 * 0.04 * Math.min(1, sw) * (1 - air) + walk.land * 0.14 - (walk.vy > 0 ? 0.06 * air : 0);
+  const breathe = Math.sin(time * 2) * 0.012 * (1 - Math.min(1, sw)) * (1 - air);
   body.scale.set(1 + squash * 0.5, 1 - squash + breathe, 1 + squash * 0.5);
+  // 고리는 땅에 남는다 (아래 앉은 자세에서 함께 정한다)
   // 2~5초마다 눈 깜빡
   walk.blink = (walk.blink ?? 3) - dt;
   const eyeY = walk.blink < 0.12 ? 0.12 : 1;
   if (walk.blink < 0) walk.blink = 2 + Math.random() * 3;
   for (const e of ud.eyes) e.scale.y = eyeY;
   for (const h of ud.shines) h.visible = eyeY === 1;
+  walk.sitT = clamp((walk.sitT || 0) + (walk.sit ? dt : -dt) * 5, 0, 1);
+  walk.sitDy = 0;
+  if (walk.sitT > 0) {
+    const t = walk.sitT * walk.sitT * (3 - 2 * walk.sitT), st = walk.sit || walk.lastSit, onSeat = st.kind === 'seat';
+    const y0 = walk.pos.y + walk.jy, y1 = onSeat ? st.top - BODY.seatY * H : walk.pos.y - 0.15 * H;
+    walk.sitDy = (y1 - y0) * t;
+    avatar.position.y = y0 + walk.sitDy;
+    for (let k = 0; k < 2; k++) {
+      const side = k ? 1 : -1, f = ud.feet[k], hd = ud.hands[k], swing = onSeat ? Math.sin(time * 2.6 + k * Math.PI) * 0.35 : 0;
+      const fp = onSeat ? [side * BODY.footX, 0.07, 0.17, 0.25 + swing] : [side * 0.1, 0.17, 0.22, -1.1];
+      const hp = onSeat ? [side * 0.15, 0.3, 0.14] : [side * 0.26, 0.2, -0.02];
+      f.position.set(f.position.x + (fp[0] - f.position.x) * t, f.position.y + (fp[1] - f.position.y) * t, f.position.z + (fp[2] - f.position.z) * t);
+      f.rotation.x += (fp[3] - f.rotation.x) * t;
+      hd.position.set(hd.position.x + (hp[0] - hd.position.x) * t, hd.position.y + (hp[1] - hd.position.y) * t, hd.position.z + (hp[2] - hd.position.z) * t);
+    }
+    body.rotation.x *= 1 - t;
+    body.rotation.z *= 1 - t;
+    body.position.y *= 1 - t;
+  }
+  ud.ring.position.y = 0.02 - (walk.jy + walk.sitDy) / H;
   ud.ring.material.opacity = 0.35 + 0.25 * Math.sin(time * 3);
 
   const near = moving ? world.near(walk.pos.x, walk.pos.z) : null;
@@ -2877,6 +2958,56 @@ function updateWalk(dt, time) {
   avatar.visible = camera.position.distanceTo(headPos()) > 0.55;
   if (world === CITY) hideOccludingLamps(headPos(), camera.position);
 }
+
+// 🪑 앉기: 가까운 빈 자리(도시는 벤치, 건물 안은 책상 의자 · 소파)가 있으면 거기 앉고, 없으면 그 자리 바닥에
+function seatsHere() {
+  const out = [];
+  if (world === CITY) {
+    for (const b of props.bench) out.push({ x: b.x, z: b.z, top: b.y + 0.36 * PK, heading: b.yaw, off: 0.32 });
+    return out;
+  }
+  const busyAt = FL.workers.filter((w) => w.mode === 'sit').map((w) => w.g.position);
+  for (const g of inRoot.children) {
+    const list = g.userData.seats || (g.userData.seat ? [g.userData.seat] : []);
+    for (const [lx, ly, lz] of list) {
+      const p = new THREE.Vector3(lx, 0, lz).applyAxisAngle(Y_AXIS, g.rotation.y).add(g.position);
+      if (busyAt.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 0.3)) continue; // 직원이 앉은 자리
+      // 책상 의자는 책상을 보고 앉고(일어설 땐 뒤로), 소파는 앞을 보고 앉는다(일어설 땐 앞으로)
+      const desk = !g.userData.seats;
+      out.push({ x: p.x, z: p.z, top: ly, heading: g.rotation.y + (desk ? Math.PI : 0), off: desk ? -0.75 : 0.7 });
+    }
+  }
+  return out;
+}
+function sitDown() {
+  if (!walk.ready || walk.sit || walk.jy || walk.vy) return;
+  const R = world === CITY ? 1.0 : 1.5;
+  let best = null, bd = R;
+  for (const st of seatsHere()) {
+    const d = Math.hypot(st.x - walk.pos.x, st.z - walk.pos.z);
+    if (d < bd) { bd = d; best = st; }
+  }
+  walk.sit = best ? { kind: 'seat', ...best } : { kind: 'ground' };
+  walk.lastSit = walk.sit;
+  walk.v = 0;
+  if (best) { walk.heading = best.heading; walk.pos.x = best.x; walk.pos.z = best.z; }
+  sfx.pop();
+  renderSitBtn();
+}
+function standUp() {
+  const st = walk.sit;
+  if (!st) return;
+  walk.sit = null;
+  // 의자 · 벤치에서는 한 발짝 비켜 선다 (그 자리에 그대로 서면 가구 안이다)
+  if (st.kind === 'seat') {
+    walk.pos.x += Math.sin(st.heading) * st.off;
+    walk.pos.z += Math.cos(st.heading) * st.off;
+  }
+  renderSitBtn();
+}
+const toggleSit = () => (walk.sit ? standUp() : sitDown());
+function renderSitBtn() { btnText($('#sitBtn'), walk.sit ? '🧍 일어서기' : '🪑 앉기'); }
+$('#sitBtn').addEventListener('click', () => { toggleSit(); $('#sitBtn').blur(); });
 
 // 카메라와 캐릭터 사이에 낀 가로등은 잠깐 숨긴다 (가는 기둥이라 카메라를 당기면 오히려 출렁인다)
 const hiddenLamps = new Set();
@@ -3019,6 +3150,7 @@ const PIECES = {
     const scr = ibox(g, 0.36, 0.24, 0.015, new THREE.MeshBasicMaterial({ color: hashColor(it.name, 0.5, 0.6) }), 0, 0.78, -0.08);
     scr.rotation.x = -0.25;
     icyl(g, 0.2, 0.17, 0.44, IMAT.chair, 0, 0, 0.62, 12); // 스툴
+    g.userData.seat = [0, 0.44, 0.62];
     return [1.0, 1.4];
   },
   // 컴포넌트: 유리 진열장 안에서 도는 장식
@@ -3116,6 +3248,7 @@ const DECOR = {
     return [0.5, 0.5];
   },
   sofa(g) {
+    g.userData.seats = [[-0.42, 0.42, 0.05], [0.42, 0.42, 0.05]];
     ibox(g, 1.8, 0.42, 0.8, IMAT.sofa, 0, 0, 0);
     ibox(g, 1.8, 0.5, 0.2, IMAT.sofa, 0, 0.3, -0.3);
     for (const x of [-0.85, 0.85]) ibox(g, 0.16, 0.6, 0.8, IMAT.sofa, x, 0, 0);
@@ -3250,10 +3383,13 @@ const INSIDE = {
   blocked(x, z) {
     const r = R_AVATAR * SCALE_IN;
     if (Math.abs(x) > FL.W / 2 - 0.15 - r || Math.abs(z) > FL.D / 2 - 0.15 - r) return true;
-    for (const b of FL.boxes) if (x > b[0] - r && x < b[1] + r && z > b[2] - r && z < b[3] + r) return true;
+    for (const b of FL.boxes) if (b[4] == null && x > b[0] - r && x < b[1] + r && z > b[2] - r && z < b[3] + r) return true;
     return false;
   },
   groundAt: () => 0,
+  // 높이가 있는 상자(가구)는 받침: 발이 닿는 높이보다 높으면 막히고, 낮으면 올라선다
+  solid: (x, z, reach, r) => FL.boxes.some((b) => b[4] != null && b[4] > reach && x > b[0] - r && x < b[1] + r && z > b[2] - r && z < b[3] + r),
+  topAt: (x, z, reach, m) => FL.boxes.reduce((top, b) => (b[4] != null && b[4] <= reach && b[4] > top && x > b[0] - m && x < b[1] + m && z > b[2] - m && z < b[3] + m ? b[4] : top), 0),
   get occluders() { return FL.walls; },
   near(x, z) {
     let best = null, bd = Infinity;
@@ -3383,7 +3519,7 @@ function buildFloor(fl) {
     ibox(inRoot, 2.8, 0.05, 0.85, IMAT.top, rx, 1.0, rz);
     ibox(inRoot, 0.5, 0.32, 0.04, IMAT.dark, rx + 0.6, 1.05, rz - 0.1);
     ibox(inRoot, 0.18, 0.04, 0.14, IM('#d9b46a', { metalness: 0.8, roughness: 0.3 }), rx - 0.7, 1.05, rz + 0.15);
-    FL.boxes.push([rx - 1.4, rx + 1.4, rz - 0.45, rz + 0.45]);
+    FL.boxes.push([rx - 1.4, rx + 1.4, rz - 0.45, rz + 0.45, 1.05]);
     FL.inter.push({ box: [rx - 1.4, rx + 1.4, rz - 0.45, rz + 0.45], r: 1.0, prompt: `<kbd>E</kbd> 🛎 <b>안내 데스크</b> <span style="color:var(--muted);font-weight:500">· 건물 소개 · 층별 안내</span>`, act: toggleBoard });
     const recep = makeWorker(f.i * 7 + 3);
     recep.position.set(rx, 0, rz - 0.75);
@@ -3463,7 +3599,7 @@ function buildFloor(fl) {
 // 요소 하나 (그룹 + 충돌 + 상호작용 + 이름표)
 function placeItem(it, x, z, ry, onWall) {
   const g = new THREE.Group();
-  const dims = PIECES[PIECE_OF[it.kind] || 'fn'](g, it);
+  const dims = PIECES[PIECE_OF[it.kind] || 'fn'](g, it), top = topOf(g);
   g.position.set(x, 0, z);
   g.rotation.y = ry;
   g.userData.item = it;
@@ -3475,7 +3611,7 @@ function placeItem(it, x, z, ry, onWall) {
   if (dims) {
     const [w, d] = Math.abs(Math.sin(ry)) > 0.5 ? [dims[1], dims[0]] : dims;
     box = [x - w / 2, x + w / 2, z - d / 2, z + d / 2];
-    FL.boxes.push(box);
+    FL.boxes.push([...box, top]);
   }
   const lines = it.end - it.line + 1;
   FL.inter.push({
@@ -3492,14 +3628,19 @@ function placeItem(it, x, z, ry, onWall) {
 }
 function placeDecor(kind, x, z, ry) {
   const g = new THREE.Group();
-  const dims = DECOR[kind](g);
+  const dims = DECOR[kind](g), top = topOf(g);
   g.position.set(x, 0, z);
   g.rotation.y = ry;
   inRoot.add(g);
   if (dims) {
     const [w, d] = Math.abs(Math.sin(ry)) > 0.5 ? [dims[1], dims[0]] : dims;
-    FL.boxes.push([x - w / 2, x + w / 2, z - d / 2, z + d / 2]);
+    FL.boxes.push([x - w / 2, x + w / 2, z - d / 2, z + d / 2, top]);
   }
+}
+// 가구 높이 (가장 높은 부분 — 모니터 · 화분 잎까지)
+function topOf(g) {
+  g.updateMatrixWorld(true);
+  return new THREE.Box3().setFromObject(g).max.y;
 }
 function updateInteriorLight() {
   const n = night;
@@ -3527,6 +3668,8 @@ async function travelToNow(fl, via) {
 }
 function placeAvatarInside(x, z, heading) {
   walk.pos.set(x, 0, z);
+  walk.jy = walk.vy = 0;
+  walk.sit = null; walk.sitT = 0; renderSitBtn();
   walk.heading = heading;
   walk.yaw = heading + Math.PI;
   walk.near = undefined;
@@ -3920,6 +4063,8 @@ addEventListener('keydown', (e) => {
   if (mode === 'inside') {
     const panelOpen = $('#elevPanel').classList.contains('open');
     if (WALK_KEYS.has(e.code) && !panelOpen) { walk.keys.add(e.code); e.preventDefault(); }
+    if (e.code === 'Space' && !panelOpen) { e.preventDefault(); if (!e.repeat) walk.jumpQ = true; }
+    if (e.code === 'KeyC' && !e.repeat && !panelOpen) toggleSit();
     if (e.code === 'KeyE' && walk.near && walk.ready && !panelOpen) world.act(walk.near);
     if (e.code === 'KeyV' && !e.repeat) setView(!walk.fp);
     if (e.key === 'Escape') { // 열린 것부터 하나씩 닫고, 다 닫혀 있으면 건물 밖으로
@@ -3932,6 +4077,8 @@ addEventListener('keydown', (e) => {
   }
   if (mode === 'walk') {
     if (WALK_KEYS.has(e.code)) { walk.keys.add(e.code); e.preventDefault(); }
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) walk.jumpQ = true; }
+    if (e.code === 'KeyC' && !e.repeat) toggleSit();
     if (e.code === 'KeyE' && walk.near && walk.ready) world.act(walk.near);
     if (e.key === 'Escape') stopWalk();
     if (e.code === 'KeyN') cycleSky();
@@ -3945,7 +4092,10 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyN') cycleSky();
   if (e.code === 'KeyL') setLabels(!labelsOn);
 });
-addEventListener('keyup', (e) => walk.keys.delete(e.code));
+addEventListener('keyup', (e) => {
+  walk.keys.delete(e.code);
+  if (e.code === 'Space' && walking() && e.target.tagName !== 'INPUT') e.preventDefault();
+});
 addEventListener('blur', () => walk.keys.clear());
 
 // ───────────────────────── 🎵 소리 ─────────────────────────
@@ -4093,6 +4243,7 @@ const sfx = {
     if (!sfxOn()) return;
     for (const [m, g] of [[1, 0.1], [2.76, 0.03], [5.4, 0.015]]) tone(sfxBus, { f: 1318 * m, a: 0.003, d: 1.4 / m, g, wet: 0.35 });
   },
+  jump() { if (sfxOn()) tone(sfxBus, { f: 320, f2: 680, a: 0.004, d: 0.18, g: 0.07 }); },
   chime() { if (sfxOn()) [72, 76, 79, 84].forEach((n, i) => tone(sfxBus, { f: mtof(n), at: i * 0.06, a: 0.004, d: 0.5, g: 0.05, wet: 0.4 })); },
 };
 // 첫 입력 때 소리를 켠다 (어느 하나라도 켜져 있을 때만)
@@ -4171,6 +4322,7 @@ $('#optWin').addEventListener('click', async (e) => {
   setTimeout(renderWin, 250);
 });
 btnText($('#viewBtn'), walk.fp ? '👀 1인칭' : '🎥 3인칭');
+renderSitBtn();
 
 // ───────────────────────── 시작 ─────────────────────────
 const CAM_KEY = `cc-cam-${DATA.root}`;
