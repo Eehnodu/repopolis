@@ -28,10 +28,14 @@
     -webkit-font-smoothing: antialiased; }
   #stage, #stage canvas { position: fixed; inset: 0; display: block; }
   #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
-  .label { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; padding: 3px 10px;
-    border-radius: 6px; background: #1f6f4a; border: 1px solid rgba(255,255,255,.55); color: #fff;
-    font-size: 12px; font-weight: 650; box-shadow: 0 2px 8px rgba(0,0,0,.3); transition: opacity .2s; }
-  .label.d2 { background: #2a5d9e; font-size: 11px; padding: 2px 8px; }
+  .label { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; padding: 2px 9px 2px 7px;
+    display: flex; align-items: center; gap: 6px; border-radius: 99px; background: rgba(12, 16, 26, .58);
+    border: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.92); font-size: 12px; font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0,0,0,.5); transition: opacity .25s; }
+  .label::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #6fd39b; flex: none; }
+  .label.d2 { font-size: 11px; padding: 1px 8px 1px 6px; color: rgba(255,255,255,.8); }
+  .label.d2::before { background: #7aa2ff; width: 5px; height: 5px; }
+  body.no-labels #labels { display: none; }
 
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
     backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
@@ -211,16 +215,31 @@
   .mon-head .dots { display: flex; gap: 6px; }
   .mon-head .dots i { width: 10px; height: 10px; border-radius: 50%; }
   .mon-head .fn { font-family: var(--mono); }
-  .mon-head .ln { color: #6e7681; }
+  .mon-head .lncount { color: #6e7681; }
   .elev { margin-left: auto; padding: 3px 10px; border-radius: 6px; background: #170707; color: #ff5a3c; border: 1px solid #3a1010;
     font: 700 13px var(--mono); letter-spacing: .08em; text-shadow: 0 0 8px rgba(255, 80, 50, .75); }
   .scroller { flex: 1; overflow: auto; position: relative; }
-  .code { display: flex; min-width: 100%; width: max-content; position: relative; }
-  .code pre { margin: 0; padding: 12px 0; font: 12.5px/20px var(--mono); tab-size: 4; }
-  .gutter { position: sticky; left: 0; z-index: 2; padding: 12px 12px 12px 14px !important; text-align: right; color: #4b5563;
-    background: #0d1117; user-select: none; border-right: 1px solid rgba(255,255,255,.05); }
-  .src { padding: 12px 28px 12px 16px !important; color: #c9d1d9; background: transparent !important; }
-  .src.hljs { padding: 12px 28px 12px 16px !important; }
+  /* 코드: 한 줄 = 한 행(20px). 줄 번호 옆 ▾ 로 블록을 접는다 */
+  .code { min-width: 100%; width: max-content; position: relative; padding: 12px 0; font: 12.5px/20px var(--mono); tab-size: 4;
+    color: #c9d1d9; background: transparent !important; }
+  .ln { display: flex; height: 20px; }
+  .ln.hid { display: none; }
+  .ln .g { position: sticky; left: 0; z-index: 2; flex: none; min-width: var(--gw, 52px); padding: 0 12px 0 22px; text-align: right;
+    color: #4b5563; background: #0d1117; user-select: none; border-right: 1px solid rgba(255,255,255,.05); }
+  .ln .fd { all: unset; position: absolute; left: 5px; top: 0; width: 14px; text-align: center; cursor: pointer; color: #6e7681;
+    opacity: 0; transition: opacity .15s, transform .15s; }
+  .scroller:hover .fd { opacity: .55; }
+  .ln .fd:hover { opacity: 1; color: #c9d1d9; }
+  .ln.folded .fd { opacity: 1; transform: rotate(-90deg); color: #ffd27a; }
+  .ln .c { white-space: pre; padding: 0 28px 0 16px; }
+  .ln.folded .c { background: rgba(255, 210, 122, .06); }
+  .fold-more { all: unset; display: inline-block; margin-left: 8px; padding: 0 7px; height: 16px; line-height: 16px; vertical-align: 1px;
+    border-radius: 5px; background: rgba(110, 118, 129, .22); color: #8b949e; font: 600 10.5px var(--mono); cursor: pointer; }
+  .fold-more:hover { background: rgba(255, 210, 122, .2); color: #ffd27a; }
+  .mon-btn { all: unset; cursor: pointer; padding: 3px 9px; border-radius: 6px; color: #8b949e; font-size: 11.5px; font-weight: 600; }
+  .mon-btn:hover { background: rgba(255,255,255,.07); color: #c9d1d9; }
+  .mon-head .elev { margin-left: 4px; }
+  .mon-head .sp { margin-left: auto; }
   .hl { position: absolute; left: 0; right: 0; height: 20px; background: rgba(255, 214, 120, .16); border-left: 3px solid #ffd27a; pointer-events: none; animation: hlfade 2.6s forwards; z-index: 1; }
   @keyframes hlfade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
   .empty-code { padding: 40px; color: #6e7681; text-align: center; }
@@ -247,6 +266,7 @@
   <button class="tbtn panel" id="walkBtn" title="도시를 걸어다니기">🚶 걸어보기</button>
   <button class="tbtn panel" id="tlBtn" title="첫 커밋부터 도시가 지어지는 과정 (Space)" hidden>🎬 타임랩스</button>
   <button class="tbtn panel" id="skyBtn" title="낮/밤 (N)"></button>
+  <button class="tbtn panel" id="labelBtn" title="폴더 이름표 켜기/끄기 (L)">🏷️ 이름표</button>
   <div class="chips" id="stats"></div>
   <label class="search panel">
     <span>🔍</span><input id="q" placeholder="파일 찾기" autocomplete="off" spellcheck="false"><span id="qcount">/</span>
@@ -279,10 +299,11 @@
 </div>
 
 <div id="walkHud" class="panel" hidden>
-  <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동</span>
+  <span><kbd>W</kbd><kbd>S</kbd> 앞뒤 <kbd>A</kbd><kbd>D</kbd> 돌기</span>
   <span><kbd>Shift</kbd> 달리기</span>
-  <span>마우스 드래그 시점 · 휠 거리</span>
+  <span>드래그 둘러보기 · 휠 거리</span>
   <span><kbd>E</kbd> 들어가기</span>
+  <button class="tbtn panel" id="viewBtn" style="height:32px" title="1인칭 / 3인칭 (V)">🎥 3인칭</button>
   <button class="tbtn panel" id="flyBtn" style="height:32px">🚁 하늘로 <kbd style="margin-left:4px">Esc</kbd></button>
 </div>
 <div id="prompt" class="panel"></div>
@@ -299,7 +320,10 @@
   <section class="monitor">
     <div class="mon-head">
       <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
-      <span class="fn" id="monName"></span><span class="ln" id="monLines"></span>
+      <span class="fn" id="monName"></span><span class="lncount" id="monLines"></span>
+      <span class="sp"></span>
+      <button class="mon-btn" id="foldAll" title="블록을 모두 접기">⊟ 모두 접기</button>
+      <button class="mon-btn" id="unfoldAll" title="모두 펴기">⊞ 모두 펴기</button>
       <span class="elev" id="elev">1F</span>
     </div>
     <div class="scroller" id="scroller"></div>
@@ -308,7 +332,7 @@
 
 <div id="tip" hidden></div>
 <div id="toast" class="panel"></div>
-<div id="hint">드래그 회전 · 우클릭 드래그 이동 · 휠 확대 · 더블클릭 들어가기 · N 낮/밤</div>
+<div id="hint">드래그 회전 · 우클릭 드래그 이동 · 휠 확대 · 더블클릭 들어가기 · N 낮/밤 · L 이름표</div>
 <div id="fade"></div>
 
 <script>
@@ -539,7 +563,7 @@ const camTarget = new THREE.Vector3(); // 카메라가 바라보는 점 (모든 
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0, 0.5, 0.82);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0, 0.35, 0.86);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
@@ -587,6 +611,8 @@ function put(mesh, idx, x, y, z, sx, sy, sz, rot = 0) {
 }
 
 // 창문이 있는 외벽 — 층마다 창을 그리고, 밤에는 일부가 켜졌다 꺼졌다 한다
+// 켜진 창 비율: 작은 도시 35% → 건물이 많을수록 줄여 큰 프로젝트도 눈부시지 않게 (최저 18%)
+const LIT_CUT = (1 - clamp(0.35 - Math.log10(Math.max(1, files.length / 60)) * 0.12, 0.18, 0.35)).toFixed(3);
 const U = { uNight: { value: 0 }, uTime: { value: 0 } };
 const facadeMat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.1 });
 facadeMat.onBeforeCompile = (sh) => {
@@ -614,9 +640,10 @@ facadeMat.onBeforeCompile = (sh) => {
         float fx = fract(gu), fy = fract(gv);
         float win = step(0.24, fx) * step(fx, 0.76) * step(0.3, fy) * step(fy, 0.8);
         vec2 key = cell + vSeed * 1.37 + vWinN.xz * 7.0;
-        float lit = step(0.5, wHash(key + floor(uTime * 0.035 + wHash(key) * 10.0)));
+        float lit = step(${LIT_CUT}, wHash(key + floor(uTime * 0.035 + wHash(key) * 10.0)));
+        float warm = wHash(key * 0.73); // 집집마다 조금씩 다른 불빛
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.17, 0.24, 0.32), win * 0.75);
-        totalEmissiveRadiance += win * lit * uNight * vec3(1.0, 0.76, 0.45) * 1.6;
+        totalEmissiveRadiance += win * lit * uNight * mix(vec3(1.0, 0.72, 0.4), vec3(0.95, 0.85, 0.7), warm) * (0.7 + warm * 0.35);
       }`);
 };
 const plainMat = new THREE.MeshStandardMaterial({ roughness: 0.85 });
@@ -708,11 +735,13 @@ for (const r of roads.filter((r) => r.main)) for (let s = 3; s < r.len; s += 9) 
 const poleMesh = inst(box, metalMat, lamps.length);
 const lampMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
 const lampMesh = inst(box, lampMat, lamps.length, { cast: false, receive: false });
-lamps.forEach(([x, z, , , y], k) => {
-  put(poleMesh, k, x, y, z, 0.09, 2.3, 0.09);
-  poleMesh.setColorAt(k, C('#59606b'));
-  put(lampMesh, k, x, y + 2.3, z, 0.34, 0.12, 0.34);
-});
+function placeLamp(k, show = true) {
+  const [x, z, , , y] = lamps[k];
+  if (!show) { poleMesh.setMatrixAt(k, ZERO); lampMesh.setMatrixAt(k, ZERO); }
+  else { put(poleMesh, k, x, y, z, 0.09, 2.3, 0.09); put(lampMesh, k, x, y + 2.3, z, 0.34, 0.12, 0.34); }
+  poleMesh.instanceMatrix.needsUpdate = lampMesh.instanceMatrix.needsUpdate = true;
+}
+lamps.forEach((_, k) => { placeLamp(k); poleMesh.setColorAt(k, C('#59606b')); });
 
 // ───────────────────────── 건물 ─────────────────────────
 const facade = inst(box, facadeMat, files.length * 3);
@@ -1034,8 +1063,74 @@ const tailMat = new THREE.MeshBasicMaterial({ color: '#ff3b30' });
 const carHead = inst(box, headMat, cars.length, { cast: false, receive: false });
 const carTail = inst(box, tailMat, cars.length, { cast: false, receive: false });
 cars.forEach((c, k) => carBody.setColorAt(k, CAR_COLORS[k % CAR_COLORS.length]));
-const personMesh = inst(new THREE.CapsuleGeometry(0.11, 0.32, 2, 6).translate(0, 0.27, 0), plainMat, people.length);
-people.forEach((p, k) => personMesh.setColorAt(k, CLOTHES[k % CLOTHES.length]));
+
+// 🧍 사람 — 주인공과 행인이 같은 몸매를 쓴다. 머리가 큰 2.5등신이고,
+// 팔다리는 몸통 안쪽 관절에서 시작해 어느 자세에서도 이음새가 벌어지지 않는다.
+const BODY = {
+  legR: 0.056, legLen: 0.36, hipX: 0.066,           // 다리 (관절 높이 = legLen - legR → 발이 땅에 닿는다)
+  torsoR: 0.13, torsoH: 0.42, torsoY: 0.5,           // 몸통 0.29 ~ 0.71
+  armR: 0.043, armLen: 0.27, shoulderX: 0.152, shoulderY: 0.6,
+  headR: 0.17, headY: 0.86,                          // 몸통 위에 살짝 겹쳐 목이 안 보인다
+};
+BODY.hipY = BODY.legLen - BODY.legR;
+const capsuleGeo = (r, total) => new THREE.CapsuleGeometry(r, total - 2 * r, 5, 12);
+const hangGeo = (r, total) => capsuleGeo(r, total).translate(0, -total / 2 + r, 0); // 위쪽 끝이 관절
+const BODY_GEO = {
+  leg: hangGeo(BODY.legR, BODY.legLen),
+  arm: hangGeo(BODY.armR, BODY.armLen),
+  torso: capsuleGeo(BODY.torsoR, BODY.torsoH),
+  head: new THREE.SphereGeometry(BODY.headR, 20, 16),
+  hair: new THREE.SphereGeometry(BODY.headR * 1.06, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.52).rotateX(-0.42),
+  eye: new THREE.SphereGeometry(0.024, 8, 6).scale(1, 1.25, 0.6),
+};
+const EYE_X = 0.058, EYE_Y = BODY.headY + 0.01, EYE_Z = Math.sqrt(BODY.headR ** 2 - EYE_X ** 2) - 0.008;
+const SKIN = ['#f3d2b3', '#e8b98f', '#c98e62', '#8d5a3b', '#f6dcc4'].map(C);
+const HAIR = ['#2b2320', '#4a3020', '#1d1d24', '#7a4a26', '#c9a26b', '#3b3b44'].map(C);
+const PANTS = ['#2d3a4a', '#3a3f48', '#4b5d7a', '#5b4a3a', '#24262b'].map(C);
+
+// 행인: 부위마다 InstancedMesh 하나씩, 매 프레임 (몸 위치 × 부위 자세) 행렬을 써 넣는다
+const charMat = new THREE.MeshStandardMaterial({ roughness: 0.7 });
+const eyeMat = new THREE.MeshBasicMaterial({ color: '#15161a' });
+const pp = {
+  leg: inst(BODY_GEO.leg, charMat, people.length * 2),
+  arm: inst(BODY_GEO.arm, charMat, people.length * 2),
+  torso: inst(BODY_GEO.torso, charMat, people.length),
+  head: inst(BODY_GEO.head, charMat, people.length),
+  hair: inst(BODY_GEO.hair, charMat, people.length),
+  eye: inst(BODY_GEO.eye, eyeMat, people.length * 2, { cast: false, receive: false }),
+};
+people.forEach((p, k) => {
+  const r = rng(k * 977 + 13);
+  p.size = 0.84 + r() * 0.18;
+  const shirt = CLOTHES[k % CLOTHES.length], pants = PANTS[Math.floor(r() * PANTS.length)];
+  pp.torso.setColorAt(k, shirt);
+  for (const s of [0, 1]) { pp.arm.setColorAt(k * 2 + s, shirt); pp.leg.setColorAt(k * 2 + s, pants); }
+  pp.head.setColorAt(k, SKIN[Math.floor(r() * SKIN.length)]);
+  pp.hair.setColorAt(k, HAIR[Math.floor(r() * HAIR.length)]);
+});
+const pBase = new THREE.Matrix4(), pLocal = new THREE.Matrix4(), pOut = new THREE.Matrix4();
+const pQuat = new THREE.Quaternion(), pScale = new THREE.Vector3(), pPos = new THREE.Vector3(), pEuler = new THREE.Euler();
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+function putPart(mesh, idx, x, y, z, rx = 0, rz = 0) {
+  pLocal.makeRotationFromEuler(pEuler.set(rx, 0, rz)).setPosition(x, y, z);
+  mesh.setMatrixAt(idx, pOut.multiplyMatrices(pBase, pLocal));
+}
+function hidePerson(k) {
+  for (const m of [pp.torso, pp.head, pp.hair]) m.setMatrixAt(k, ZERO);
+  for (const m of [pp.leg, pp.arm, pp.eye]) { m.setMatrixAt(k * 2, ZERO); m.setMatrixAt(k * 2 + 1, ZERO); }
+}
+function posePerson(k, x, y, z, yaw, size, swing) {
+  pBase.compose(pPos.set(x, y, z), pQuat.setFromAxisAngle(Y_AXIS, yaw), pScale.setScalar(size));
+  putPart(pp.torso, k, 0, BODY.torsoY, 0);
+  putPart(pp.head, k, 0, BODY.headY, 0);
+  putPart(pp.hair, k, 0, BODY.headY, 0);
+  for (const s of [0, 1]) {
+    const side = s ? 1 : -1;
+    putPart(pp.leg, k * 2 + s, side * BODY.hipX, BODY.hipY, 0, swing * side);
+    putPart(pp.arm, k * 2 + s, side * BODY.shoulderX, BODY.shoulderY, 0, -swing * side * 0.8, side * 0.12);
+    putPart(pp.eye, k * 2 + s, side * EYE_X, EYE_Y, EYE_Z);
+  }
+}
 
 function putOriented(mesh, idx, px, y, pz, tx, tz, along, sx, sy, sz) {
   dummy.position.set(px + tx * along, y, pz + tz * along);
@@ -1062,13 +1157,14 @@ function moveStreets(dt, time) {
   for (const m of [carBody, carCab, carHead, carTail]) m.instanceMatrix.needsUpdate = true;
   const activePeople = Math.round(people.length * progress);
   people.forEach((p, k) => {
-    if (k >= activePeople) { personMesh.setMatrixAt(k, ZERO); return; }
+    if (k >= activePeople) { hidePerson(k); return; }
     p.s = (p.s + p.speed * p.dir * dt + p.ring.len) % p.ring.len;
     const [x, z, tx, tz] = onRing(p.ring, p.s, 0);
-    const bob = Math.abs(Math.sin(time * 7 + p.phase)) * 0.05;
-    putOriented(personMesh, k, x, p.ring.lvl + bob, z, tx * p.dir, tz * p.dir, 0, 1, 1, 1);
+    const step = time * (5 + p.speed * 4) + p.phase;
+    const bob = Math.abs(Math.cos(step)) * 0.018;
+    posePerson(k, x, p.ring.lvl + bob, z, Math.atan2(tx * p.dir, tz * p.dir), p.size, Math.sin(step) * 0.55);
   });
-  personMesh.instanceMatrix.needsUpdate = true;
+  for (const m of Object.values(pp)) m.instanceMatrix.needsUpdate = true;
 }
 
 // 🏗️ 공사장 — 커밋 안 된 변경이 있는 파일에 타워 크레인
@@ -1173,11 +1269,11 @@ function applySky(time) {
   ground.material.color.copy(ramp(SKY.grass, n));
   U.uNight.value = n;
   U.uTime.value = time;
-  bloom.strength = n * 0.85;
+  bloom.strength = n * 0.45;
   cloudMat.opacity = 0.92 * (1 - n * 0.85);
   starMat.opacity = clamp01((n - 0.5) * 2);
-  const glow = 0.8 + n * 1.8;
-  lampMat.color.setRGB(1 * glow, 0.82 * glow, 0.55 * glow);
+  const glow = 0.8 + n * 0.75;
+  lampMat.color.setRGB(1 * glow, 0.8 * glow, 0.52 * glow);
   headMat.color.setRGB(1 * glow, 0.95 * glow, 0.8 * glow);
   tailMat.color.setRGB(1 * (0.7 + n), 0.15, 0.12);
   const on = Math.sin(time * 2.6) > 0.55 ? 1 : 0.12;
@@ -1336,12 +1432,24 @@ const labelEls = districts.map((d, k) => ({ d, k }))
     return { el, k, pos: new THREE.Vector3(d.vis.x + d.vis.w / 2, topY(d.depth) + 0.3, d.vis.y + d.vis.h) };
   });
 const tmpV = new THREE.Vector3();
+let labelsOn = store.get('cc-labels') !== '0';
+function setLabels(on) {
+  labelsOn = on;
+  store.set('cc-labels', on ? '1' : '0');
+  document.body.classList.toggle('no-labels', !on);
+  $('#labelBtn').classList.toggle('on', on);
+}
+$('#labelBtn').addEventListener('click', () => setLabels(!labelsOn));
+setLabels(labelsOn);
 function updateLabels() {
+  if (!labelsOn) return;
   const far = mode === 'walk' ? 45 : Infinity;
   for (const { el, k, pos } of labelEls) {
     tmpV.copy(pos).project(camera);
-    const show = distVisible[k] && tmpV.z < 1 && Math.abs(tmpV.x) < 1.1 && Math.abs(tmpV.y) < 1.1 && camera.position.distanceTo(pos) < far;
-    el.style.opacity = show ? 1 : 0;
+    const d = camera.position.distanceTo(pos);
+    const show = distVisible[k] && tmpV.z < 1 && Math.abs(tmpV.x) < 1.1 && Math.abs(tmpV.y) < 1.1 && d < far;
+    // 코앞의 이름표는 시야를 가리므로 흐리게
+    el.style.opacity = show ? clamp01((d - 4) / 8) : 0;
     if (show) { el.style.left = `${(tmpV.x * 0.5 + 0.5) * innerWidth}px`; el.style.top = `${(-tmpV.y * 0.5 + 0.5) * innerHeight}px`; }
   }
 }
@@ -1374,7 +1482,31 @@ function endTween() {
   if (mode === 'orbit') { controls.target.copy(camTarget); controls.enabled = true; controls.update(); }
   t.resolve();
 }
-controls.addEventListener('start', () => { if (tween?.cancellable) endTween(); });
+controls.addEventListener('start', () => {
+  if (tween?.cancellable) endTween();
+  if (!tween && mode === 'orbit') repivot();
+});
+
+// 회전 · 확대의 기준점을 "지금 화면 가운데 보이는 곳"으로 옮긴다.
+// 기준점이 멀리(이동 · 확대로 지나쳐 온 곳) 남아 있으면 조금만 돌려도 카메라가 크게 휘둘린다.
+// 시선 위의 점으로만 옮기므로 화면은 그대로다.
+const centerRay = new THREE.Raycaster();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+function repivot() {
+  centerRay.setFromCamera(new THREE.Vector2(0, 0), camera);
+  let dist = Infinity;
+  for (const m of [facade, plain, roofs, distMesh, lotMesh]) {
+    const hit = centerRay.intersectObject(m, false)[0];
+    if (hit) dist = Math.min(dist, hit.distance);
+  }
+  if (dist === Infinity) {
+    const p = centerRay.ray.intersectPlane(groundPlane, tmpV);
+    dist = p ? camera.position.distanceTo(p) : camera.position.distanceTo(controls.target);
+  }
+  dist = clamp(dist, controls.minDistance + 0.01, controls.maxDistance);
+  controls.target.copy(camera.position).addScaledVector(centerRay.ray.direction, dist);
+  camTarget.copy(controls.target);
+}
 
 // 지금 보는 방향(수평)을 유지하면서 정해진 각도로 내려다본다
 function viewFrom(target, dist, elev) {
@@ -1457,29 +1589,54 @@ function pick() {
 
 // ───────────────────────── 🚶 걷기 ─────────────────────────
 const R_AVATAR = 0.28;
-const walk = { pos: new THREE.Vector3(), yaw: 0, pitch: 0.32, dist: 4.2, heading: 0, swing: 0, phase: 0, keys: new Set(), near: null, drag: null, ready: false };
+// yaw: 카메라가 캐릭터 뒤 어느 쪽에 있는지 / heading: 캐릭터가 바라보는 방향 — 카메라는 heading 을 따라 등 뒤로 돈다
+const walk = { pos: new THREE.Vector3(), yaw: 0, pitch: 0.32, look: 0.08, dist: 4.2, heading: 0, swing: 0, phase: 0, back: 1,
+  fp: store.get('cc-view') === 'fp', keys: new Set(), near: null, drag: null, ready: false };
+const EYE_H = BODY.headY + 0.02;
 const avatar = (() => {
   const g = new THREE.Group();
-  const mat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.7 });
-  const add = (mesh, x, y, z, parent = g) => { mesh.position.set(x, y, z); mesh.castShadow = true; parent.add(mesh); return mesh; };
-  add(new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.26, 4, 12), mat('#ff8a5c')), 0, 0.52, 0);
-  add(new THREE.Mesh(new THREE.SphereGeometry(0.15, 18, 14), mat('#f3d2b3')), 0, 0.9, 0);
-  add(new THREE.Mesh(new THREE.SphereGeometry(0.158, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.5), mat('#2b2b33')), 0, 0.92, -0.01);
-  add(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.26, 0.1), mat('#5b7cfa')), 0, 0.56, -0.19);
-  for (const x of [-0.05, 0.05]) add(new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), mat('#1a1a1a')), x, 0.92, 0.14);
-  const limb = (x, y, w, h, color) => {
+  const mat = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.65, ...o });
+  const add = (geo, m, x, y, z, parent = g) => {
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    parent.add(mesh);
+    return mesh;
+  };
+  const hoodie = mat('#ff8a5c'), pants = mat('#2d3a4a'), skin = mat('#f3d2b3'), cap = mat('#5b7cfa'), white = mat('#f4f4f4');
+  add(BODY_GEO.torso, hoodie, 0, BODY.torsoY, 0);
+  add(BODY_GEO.head, skin, 0, BODY.headY, 0);
+  add(BODY_GEO.hair, mat('#3a2a22'), 0, BODY.headY - 0.005, -0.004);
+  for (const s of [-1, 1]) {
+    add(BODY_GEO.eye, mat('#15161a'), s * EYE_X, EYE_Y, EYE_Z);
+    add(new THREE.SphereGeometry(0.03, 10, 8).scale(1, 0.6, 0.4), mat('#ff9a8a', { transparent: true, opacity: 0.55 }), s * 0.095, EYE_Y - 0.05, EYE_Z - 0.03);
+  }
+  // 모자: 머리 윗부분 + 앞으로 나온 챙
+  add(new THREE.SphereGeometry(BODY.headR * 1.09, 22, 12, 0, Math.PI * 2, 0, Math.PI * 0.36), cap, 0, BODY.headY + 0.01, 0);
+  add(new THREE.CylinderGeometry(0.12, 0.12, 0.018, 20, 1, false, -Math.PI / 2, Math.PI).scale(1, 1, 0.9), cap, 0, BODY.headY + 0.085, 0.11).rotation.x = 0.12;
+  // 후드 끈 · 주머니
+  add(new THREE.CapsuleGeometry(0.075, 0.07, 4, 10).rotateZ(Math.PI / 2).scale(1, 0.55, 0.4), mat('#e8764b'), 0, 0.42, BODY.torsoR - 0.01);
+  const limb = (x, y, geo, m, extra) => {
     const pivot = new THREE.Group();
     pivot.position.set(x, y, 0);
-    add(new THREE.Mesh(new THREE.BoxGeometry(w, h, w), mat(color)), 0, -h / 2, 0, pivot);
+    add(geo, m, 0, 0, 0, pivot);
+    extra?.(pivot);
     g.add(pivot);
     return pivot;
   };
-  g.userData.legs = [limb(-0.08, 0.32, 0.1, 0.32, '#2d3a4a'), limb(0.08, 0.32, 0.1, 0.32, '#2d3a4a')];
-  g.userData.arms = [limb(-0.22, 0.68, 0.08, 0.28, '#ff8a5c'), limb(0.22, 0.68, 0.08, 0.28, '#ff8a5c')];
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.32, 0.42, 32), new THREE.MeshBasicMaterial({ color: '#7aa2ff', transparent: true, opacity: 0.8 }));
+  const shoe = (p) => add(new THREE.SphereGeometry(0.07, 14, 10).scale(0.95, 0.6, 1.35), white, 0, BODY.legR - BODY.legLen + 0.03, 0.03, p);
+  const hand = (p) => add(new THREE.SphereGeometry(BODY.armR * 1.15, 12, 10), skin, 0, BODY.armR - BODY.armLen, 0, p);
+  g.userData.legs = [-1, 1].map((s) => limb(s * BODY.hipX, BODY.hipY, BODY_GEO.leg, pants, shoe));
+  g.userData.arms = [-1, 1].map((s) => {
+    const a = limb(s * BODY.shoulderX, BODY.shoulderY, BODY_GEO.arm, hoodie, hand);
+    a.rotation.z = s * 0.12;
+    return a;
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.38, 40), new THREE.MeshBasicMaterial({ color: '#7aa2ff', transparent: true, opacity: 0.6, depthWrite: false }));
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.02;
   g.add(ring);
+  g.userData.ring = ring;
   g.visible = false;
   scene.add(g);
   return g;
@@ -1515,7 +1672,14 @@ function nearestBuilding(x, z) {
   return best;
 }
 const headPos = () => walk.pos.clone().setY(walk.pos.y + 0.85);
+const eyePos = () => walk.pos.clone().setY(walk.pos.y + EYE_H).add(new THREE.Vector3(Math.sin(walk.heading), 0, Math.cos(walk.heading)).multiplyScalar(0.14));
+// 지금 시점(1인칭 / 3인칭)에서 카메라가 있어야 할 곳과 바라볼 점
 function walkCamDesired() {
+  if (walk.fp) {
+    const eye = eyePos(), cl = Math.cos(walk.look);
+    const look = eye.clone().add(new THREE.Vector3(Math.sin(walk.heading) * cl, -Math.sin(walk.look), Math.cos(walk.heading) * cl));
+    return { pos: eye, look };
+  }
   const head = headPos(), cp = Math.cos(walk.pitch);
   const dir = new THREE.Vector3(Math.sin(walk.yaw) * cp, Math.sin(walk.pitch), Math.cos(walk.yaw) * cp);
   // 건물에 가리면 카메라를 캐릭터 쪽으로 당긴다
@@ -1527,7 +1691,14 @@ function walkCamDesired() {
     if (hit) dist = Math.min(dist, hit.distance - 0.25);
   }
   raycaster.far = Infinity;
-  return head.addScaledVector(dir, Math.max(0.8, dist));
+  return { pos: head.clone().addScaledVector(dir, Math.max(0.8, dist)), look: head };
+}
+function setView(fp) {
+  walk.fp = fp;
+  store.set('cc-view', fp ? 'fp' : 'tp');
+  if (fp) walk.look = 0.08;
+  else { walk.yaw = walk.heading + Math.PI; walk.dist = Math.max(walk.dist, 2.2); }
+  $('#viewBtn').textContent = fp ? '👀 1인칭' : '🎥 3인칭';
 }
 // 아무 건물 앞이 아니라 도로 위에서 시작한다
 function spawnPoint(near) {
@@ -1552,6 +1723,7 @@ async function startWalk() {
   walk.heading = walk.yaw + Math.PI;
   walk.pitch = 0.32;
   walk.ready = false;
+  setView(walk.fp);
   avatar.position.copy(walk.pos);
   avatar.rotation.y = walk.heading;
   avatar.visible = true;
@@ -1560,7 +1732,8 @@ async function startWalk() {
   document.body.classList.add('walking');
   $('#walkHud').hidden = false;
   $('#walkBtn').classList.add('on');
-  await tweenCamera(walkCamDesired(), headPos(), 1.5);
+  const { pos, look } = walkCamDesired();
+  await tweenCamera(pos, look, 1.5);
   walk.ready = true;
 }
 async function stopWalk() {
@@ -1571,6 +1744,7 @@ async function stopWalk() {
   $('#walkHud').hidden = true;
   $('#walkBtn').classList.remove('on');
   document.body.classList.remove('walking');
+  hideOccludingLamps(null, null);
   const target = walk.pos.clone();
   mode = 'orbit';
   controls.target.copy(camTarget);
@@ -1581,36 +1755,38 @@ const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) 
 
 function updateWalk(dt, time) {
   const k = walk.keys, moving = walk.ready;
-  let ix = 0, iz = 0;
+  // W/S 앞뒤 · A/D 몸 돌리기 — 화면은 항상 캐릭터가 바라보는 쪽을 따라간다
+  let fwd = 0, turn = 0;
   if (moving) {
-    const fx = -Math.sin(walk.yaw), fz = -Math.cos(walk.yaw), rx = Math.cos(walk.yaw), rz = -Math.sin(walk.yaw);
-    if (k.has('KeyW') || k.has('ArrowUp')) { ix += fx; iz += fz; }
-    if (k.has('KeyS') || k.has('ArrowDown')) { ix -= fx; iz -= fz; }
-    if (k.has('KeyD') || k.has('ArrowRight')) { ix += rx; iz += rz; }
-    if (k.has('KeyA') || k.has('ArrowLeft')) { ix -= rx; iz -= rz; }
+    if (k.has('KeyW') || k.has('ArrowUp')) fwd += 1;
+    if (k.has('KeyS') || k.has('ArrowDown')) fwd -= 1;
+    if (k.has('KeyA') || k.has('ArrowLeft')) turn += 1;
+    if (k.has('KeyD') || k.has('ArrowRight')) turn -= 1;
   }
-  const len = Math.hypot(ix, iz);
   const run = k.has('ShiftLeft') || k.has('ShiftRight');
-  if (len > 0) {
-    const sp = (run ? 9.5 : 4.2) * dt;
-    ix /= len; iz /= len;
-    const px = walk.pos.x, pz = walk.pos.z, nx = px + ix * sp, nz = pz + iz * sp;
+  walk.heading += turn * (run ? 2.6 : 2.2) * dt;
+  if (fwd) {
+    const sp = (fwd > 0 ? (run ? 9.5 : 4.2) : 2.4) * fwd * dt; // 뒷걸음은 천천히
+    const ix = Math.sin(walk.heading) * sp, iz = Math.cos(walk.heading) * sp;
+    const px = walk.pos.x, pz = walk.pos.z, nx = px + ix, nz = pz + iz;
     if (!blocked(nx, nz)) { walk.pos.x = nx; walk.pos.z = nz; }
     else if (!blocked(nx, pz)) walk.pos.x = nx;
     else if (!blocked(px, nz)) walk.pos.z = nz;
-    walk.heading = lerpAngle(walk.heading, Math.atan2(ix, iz), Math.min(1, dt * 12));
-    walk.phase += dt * (run ? 15 : 9);
-  }
-  walk.swing += ((len > 0 ? (run ? 0.9 : 0.6) : 0) - walk.swing) * Math.min(1, dt * 10);
+    walk.phase += dt * (fwd > 0 && run ? 15 : 9) * fwd;
+  } else if (turn) walk.phase += dt * 6; // 제자리에서 돌 땐 발만 살짝
+  const stepping = fwd ? (run && fwd > 0 ? 0.9 : 0.6) : turn ? 0.25 : 0;
+  walk.swing += (stepping - walk.swing) * Math.min(1, dt * 10);
   walk.pos.y += (groundAt(walk.pos.x, walk.pos.z) - walk.pos.y) * Math.min(1, dt * 14);
+  // 3인칭 카메라는 마우스로 돌려 놓았어도 걷기 시작하면 다시 등 뒤로 돌아온다
+  if (!walk.drag) walk.yaw = lerpAngle(walk.yaw, walk.heading + Math.PI, 1 - Math.exp(-dt * (fwd || turn ? 5 : 1.5)));
 
   avatar.position.copy(walk.pos);
-  avatar.position.y += Math.abs(Math.sin(walk.phase)) * 0.04 * walk.swing;
+  avatar.position.y += Math.abs(Math.cos(walk.phase)) * 0.03 * walk.swing;
   avatar.rotation.y = walk.heading;
   const s = Math.sin(walk.phase) * walk.swing;
-  avatar.userData.legs[0].rotation.x = s; avatar.userData.legs[1].rotation.x = -s;
-  avatar.userData.arms[0].rotation.x = -s * 0.8; avatar.userData.arms[1].rotation.x = s * 0.8;
-  avatar.children[avatar.children.length - 1].material.opacity = 0.5 + 0.3 * Math.sin(time * 3);
+  avatar.userData.legs[0].rotation.x = -s; avatar.userData.legs[1].rotation.x = s;
+  avatar.userData.arms[0].rotation.x = s * 0.8; avatar.userData.arms[1].rotation.x = -s * 0.8;
+  avatar.userData.ring.material.opacity = 0.35 + 0.25 * Math.sin(time * 3);
 
   const near = moving ? nearestBuilding(walk.pos.x, walk.pos.z) : null;
   if (near !== walk.near) {
@@ -1620,12 +1796,33 @@ function updateWalk(dt, time) {
   }
 
   if (!tween) {
-    camera.position.lerp(walkCamDesired(), 1 - Math.exp(-dt * 12));
-    camTarget.copy(headPos());
+    const { pos, look } = walkCamDesired();
+    camera.position.lerp(pos, 1 - Math.exp(-dt * (walk.fp ? 30 : 12)));
+    camTarget.copy(look);
     camera.lookAt(camTarget);
   }
+  // 1인칭에선 카메라가 머리 안으로 들어오면 몸을 숨긴다
+  avatar.visible = camera.position.distanceTo(headPos()) > 0.55;
+  hideOccludingLamps(headPos(), camera.position);
 }
 
+// 카메라와 캐릭터 사이에 낀 가로등은 잠깐 숨긴다 (가는 기둥이라 카메라를 당기면 오히려 출렁인다)
+const hiddenLamps = new Set();
+function hideOccludingLamps(a, b) {
+  const now = new Set();
+  if (b) {
+    const dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz || 1;
+    lamps.forEach(([x, z, , , y], k) => {
+      const t = clamp01(((x - a.x) * dx + (z - a.z) * dz) / L2);
+      const cy = a.y + (b.y - a.y) * t;
+      if (Math.hypot(a.x + dx * t - x, a.z + dz * t - z) < 0.35 && cy > y - 0.2 && cy < y + 2.6) now.add(k);
+    });
+  }
+  for (const k of hiddenLamps) if (!now.has(k)) { placeLamp(k); hiddenLamps.delete(k); }
+  for (const k of now) if (!hiddenLamps.has(k)) { placeLamp(k, false); hiddenLamps.add(k); }
+}
+
+// 마우스 드래그: 좌우는 캐릭터가 같이 돌고(바라보는 쪽 = 화면), 위아래는 시선 높이
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (mode !== 'walk') return;
   walk.drag = [e.clientX, e.clientY];
@@ -1633,18 +1830,26 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (mode !== 'walk' || !walk.drag) return;
-  walk.yaw -= (e.clientX - walk.drag[0]) * 0.006;
-  walk.pitch = clamp(walk.pitch + (e.clientY - walk.drag[1]) * 0.005, 0.02, 1.3);
+  const dx = e.clientX - walk.drag[0], dy = e.clientY - walk.drag[1];
+  walk.heading -= dx * 0.005;
+  walk.yaw -= dx * 0.005;
+  if (walk.fp) walk.look = clamp(walk.look + dy * 0.004, -0.9, 1.0);
+  else walk.pitch = clamp(walk.pitch + dy * 0.005, 0.02, 1.3);
   walk.drag = [e.clientX, e.clientY];
 });
 renderer.domElement.addEventListener('pointerup', () => { walk.drag = null; });
+// 휠: 3인칭 거리. 끝까지 당기면 1인칭, 1인칭에서 밀면 다시 3인칭
 renderer.domElement.addEventListener('wheel', (e) => {
   if (mode !== 'walk') return;
-  walk.dist = clamp(walk.dist * (1 + e.deltaY * 0.001), 1.4, 18);
+  if (walk.fp) { if (e.deltaY > 0) { walk.dist = 2.2; setView(false); } return; }
+  const d = walk.dist * (1 + e.deltaY * 0.001);
+  if (d < 1.4 && e.deltaY < 0) setView(true);
+  else walk.dist = clamp(d, 1.4, 18);
 }, { passive: true });
 renderer.domElement.addEventListener('contextmenu', (e) => { if (mode === 'walk') e.preventDefault(); });
 $('#walkBtn').addEventListener('click', () => (mode === 'walk' ? stopWalk() : startWalk()));
 $('#flyBtn').addEventListener('click', stopWalk);
+$('#viewBtn').addEventListener('click', () => setView(!walk.fp));
 
 // ───────────────────────── 🚪 건물 안 (로비) ─────────────────────────
 const lobby = new THREE.Scene();
@@ -1966,6 +2171,7 @@ async function showInside(f) {
   lobbyView();
   $('#board').innerHTML = '<h4>DIRECTORY · 층별 안내</h4><div class="intro auto">안내판을 준비하는 중…</div>';
   $('#scroller').innerHTML = '<div class="empty-code">코드를 불러오는 중…</div>';
+  code.rows = []; code.visible = []; code.folded.clear();
 
   const [text, hljs] = await Promise.all([getSource(f), loadHljs()]);
   if (insideFile !== f) return;
@@ -2026,30 +2232,108 @@ function renderBoard(f, intro, outline) {
 }
 
 const LINE_H = 20;
+// 하이라이트된 HTML 을 줄 단위로 자른다 — 여러 줄에 걸친 <span>(주석 · 문자열)은 줄마다 닫았다 다시 연다
+function splitHtmlLines(html) {
+  const out = [], open = [];
+  let cur = '';
+  for (const tok of html.match(/<span[^>]*>|<\/span>|\n|[^<\n]+|</g) || []) {
+    if (tok === '\n') { out.push(cur + '</span>'.repeat(open.length)); cur = open.join(''); }
+    else if (tok.startsWith('<span')) { open.push(tok); cur += tok; }
+    else if (tok === '</span>') { open.pop(); cur += tok; }
+    else cur += tok;
+  }
+  out.push(cur + '</span>'.repeat(open.length));
+  return out;
+}
+// 접을 수 있는 블록: 다음 줄부터 들여쓰기가 더 깊은 줄들 (닫는 괄호 줄은 남긴다). foldEnd[줄] = 블록 마지막 줄
+function foldRanges(lines) {
+  const n = lines.length, ind = new Int32Array(n + 2).fill(-1), end = new Int32Array(n + 2);
+  for (let i = 1; i <= n; i++) {
+    const l = lines[i - 1];
+    if (/\S/.test(l)) ind[i] = l.match(/^[ \t]*/)[0].replace(/\t/g, '    ').length;
+  }
+  for (let i = 1; i <= n; i++) {
+    if (ind[i] < 0) continue;
+    let j = i + 1;
+    while (j <= n && ind[j] < 0) j++;
+    if (j > n || ind[j] <= ind[i]) continue;
+    let last = j;
+    for (let k = j + 1; k <= n; k++) {
+      if (ind[k] < 0) continue;
+      if (ind[k] > ind[i]) last = k; else break;
+    }
+    if (last - i >= 2) end[i] = last;
+  }
+  return end;
+}
+const code = { rows: [], end: null, folded: new Set(), visible: [] };
 function renderCode(text, lang, hljs) {
-  const n = text.split('\n').length;
+  text = text.replace(/\r\n?/g, '\n'); // 윈도우 줄바꿈의 \r 이 줄 끝에 남지 않게
+  const lines = text.split('\n'), n = lines.length;
   let html = esc(text);
   const hl = HL_LANG[lang];
   if (hljs && hl && hljs.getLanguage(hl) && text.length < 600000) {
     try { html = hljs.highlight(text, { language: hl, ignoreIllegals: true }).value; } catch {}
   }
-  $('#scroller').innerHTML = `<div class="code"><pre class="gutter">${Array.from({ length: n }, (_, k) => k + 1).join('\n')}</pre><pre class="src hljs"><code>${html}</code></pre></div>`;
+  const htmlLines = splitHtmlLines(html);
+  code.end = foldRanges(lines);
+  code.folded = new Set();
+  const gw = `${String(n).length * 7.6 + 34}px`;
+  $('#scroller').innerHTML = `<div class="code hljs" style="--gw:${gw}">${htmlLines.map((h, k) => {
+    const i = k + 1, e = code.end[i];
+    return `<div class="ln" data-n="${i}"><span class="g">${e ? `<button class="fd" data-fold="${i}" title="${e - i}줄 접기">▾</button>` : ''}${i}</span><span class="c">${h || ' '}</span></div>`;
+  }).join('')}</div>`;
+  code.rows = [...$('#scroller').querySelectorAll('.ln')];
+  applyFolds();
   $('#scroller').scrollTop = 0;
 }
+function applyFolds() {
+  const vis = [];
+  let hideTo = 0;
+  code.rows.forEach((row, k) => {
+    const i = k + 1, hidden = i <= hideTo, folded = !hidden && code.folded.has(i);
+    row.classList.toggle('hid', hidden);
+    row.classList.toggle('folded', folded);
+    const more = row.querySelector('.fold-more');
+    if (folded && !more) row.querySelector('.c').insertAdjacentHTML('beforeend', `<button class="fold-more" data-fold="${i}">⋯ ${code.end[i] - i}줄</button>`);
+    else if (!folded && more) more.remove();
+    if (folded) hideTo = Math.max(hideTo, code.end[i]);
+    if (!hidden) vis.push(i);
+  });
+  code.visible = vis;
+}
+function toggleFold(i) {
+  if (code.folded.has(i)) code.folded.delete(i); else code.folded.add(i);
+  applyFolds();
+}
+$('#scroller').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-fold]');
+  if (b) toggleFold(+b.dataset.fold);
+});
+$('#foldAll').addEventListener('click', () => {
+  code.folded = new Set(code.rows.map((_, k) => k + 1).filter((i) => code.end[i]));
+  applyFolds();
+});
+$('#unfoldAll').addEventListener('click', () => { code.folded.clear(); applyFolds(); });
 function gotoLine(line) {
-  const sc = $('#scroller');
-  sc.scrollTo({ top: Math.max(0, (line - 1) * LINE_H - sc.clientHeight * 0.3), behavior: 'smooth' });
+  // 접힌 블록 안이면 펼친다
+  let changed = false;
+  for (const s of code.folded) if (s < line && line <= code.end[s]) { code.folded.delete(s); changed = true; }
+  if (changed) applyFolds();
+  const sc = $('#scroller'), row = code.rows[line - 1];
+  if (!row) return;
+  sc.scrollTo({ top: Math.max(0, row.offsetTop - sc.clientHeight * 0.3), behavior: 'smooth' });
   sc.querySelector('.hl')?.remove();
   const mark = document.createElement('div');
   mark.className = 'hl';
-  mark.style.top = `${12 + (line - 1) * LINE_H}px`;
+  mark.style.top = `${row.offsetTop}px`;
   sc.querySelector('.code')?.appendChild(mark);
 }
 let lastFloor = 1;
 $('#scroller').addEventListener('scroll', () => {
-  if (!insideFile) return;
+  if (!insideFile || !code.visible.length) return;
   const sc = $('#scroller');
-  const line = Math.max(1, Math.round((sc.scrollTop + sc.clientHeight * 0.3) / LINE_H));
+  const line = code.visible[clamp(Math.floor((sc.scrollTop + sc.clientHeight * 0.3 - 12) / LINE_H), 0, code.visible.length - 1)];
   const fl = floorOfLine(line);
   if (fl !== elevFloor) {
     drawElevator(fl, Math.sign(fl - lastFloor));
@@ -2091,9 +2375,13 @@ async function exitBuilding() {
     if (at !== f) {
       for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
         const x = f.x + dx * (f.box.w / 2 + 0.7), z = f.z + dz * (f.box.d / 2 + 0.7);
-        if (!blocked(x, z)) { walk.pos.set(x, groundAt(x, z), z); walk.yaw = Math.atan2(dx, dz); break; }
+        // 건물을 등지고 거리 쪽을 바라보게 선다
+        if (!blocked(x, z)) { walk.pos.set(x, groundAt(x, z), z); walk.heading = Math.atan2(dx, dz); walk.yaw = walk.heading + Math.PI; break; }
       }
-      camera.position.copy(walkCamDesired());
+      const { pos, look } = walkCamDesired();
+      camera.position.copy(pos);
+      camTarget.copy(look);
+      camera.lookAt(camTarget);
     }
     walk.near = undefined;
   }
@@ -2114,12 +2402,15 @@ addEventListener('keydown', (e) => {
     if (e.code === 'KeyE' && walk.near && walk.ready) enterBuilding(walk.near);
     if (e.key === 'Escape') stopWalk();
     if (e.code === 'KeyN') cycleSky();
+    if (e.code === 'KeyL') setLabels(!labelsOn);
+    if (e.code === 'KeyV' && !e.repeat) setView(!walk.fp);
     return;
   }
   if (e.code === 'Space' && HAS_GIT) { e.preventDefault(); setPlaying(!state.playing); }
   if (e.key === 'Escape') select(-1);
   if (e.key === '/') { e.preventDefault(); $('#q').focus(); }
   if (e.code === 'KeyN') cycleSky();
+  if (e.code === 'KeyL') setLabels(!labelsOn);
 });
 addEventListener('keyup', (e) => walk.keys.delete(e.code));
 addEventListener('blur', () => walk.keys.clear());
