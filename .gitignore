@@ -1,0 +1,23 @@
+# 의존성 · 만든 결과
+node_modules/
+dist/
+output/
+app/vendor/
+
+# 비밀값
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*token*
+*secret*
+
+# 기타
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

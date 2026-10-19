@@ -1,0 +1,82 @@
+# 태그(v*)를 올리면 Windows · macOS 앱을 만들어 GitHub Releases 에 붙인다.
+# Actions 탭에서 손으로 돌리면(workflow_dispatch) 만들기 · 점검만 하고 Release 는 만들지 않는다.
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"  # 인증서 서명 안 함 (맥은 아래에서 애드혹 서명)
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash  # Windows 에서도 한 줄이라도 실패하면 멈추게
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 의존성 (postinstall 이 app/vendor 를 채운다)
+        run: npm ci
+
+      - name: 자체 점검 (이 저장소를 도시 HTML 로 만들어 보기)
+        run: |
+          node scan.js . -o selftest.html --no-open
+          node -e "const s=require('fs').statSync('selftest.html').size; console.log('selftest.html', s, 'bytes'); if (s < 10000) process.exit(1)"
+          node -e "for (const f of ['app/vendor/three/build/three.module.js','app/vendor/hljs/highlight.min.js']) require('fs').accessSync(f)"
+
+      - name: 만들기 (Windows)
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win portable --x64 --publish never
+
+      - name: 만들기 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          npx electron-builder --mac dir --arm64 --x64 --publish never
+          # 인증서 없이 만든 앱은 서명이 깨져 "손상되었기 때문에 열 수 없습니다"가 뜬다 — 애드혹 서명 후 검사
+          for d in mac-arm64:arm64 mac:x64; do
+            dir="${d%%:*}"; arch="${d##*:}"
+            app="dist/$dir/Repopolis.app"
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            ditto -c -k --keepParent "$app" "dist/Repopolis-macos-$arch.zip"
+            # 사람들이 받는 바로 그 zip 을 풀어 서명을 다시 검사
+            rm -rf zipcheck && mkdir zipcheck && ditto -x -k "dist/Repopolis-macos-$arch.zip" zipcheck
+            codesign --verify --deep --strict --verbose=2 zipcheck/Repopolis.app
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repopolis-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            dist/Repopolis-windows.exe
+            dist/Repopolis-macos-*.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
