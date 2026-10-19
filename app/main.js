@@ -11,7 +11,7 @@ if (typeof electron === 'string' || !electron.app) {
   process.exit(0);
 }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } = electron;
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen } = electron;
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { Worker } = require('worker_threads');
@@ -227,6 +227,35 @@ handle('read-file', (_, rel) => {
   return fs.readFileSync(p, 'utf8');
 });
 
+// 창 크기: 설정 패널의 프리셋(작게 · 보통 · 크게) · 최대화 · 전체 화면
+const windowState = () => ({ size: win.getSize(), max: win.isMaximized(), full: win.isFullScreen() });
+handle('window-state', () => (win ? windowState() : null));
+handle('window', (_, cmd) => {
+  if (!win) return null;
+  if (cmd === 'full') win.setFullScreen(!win.isFullScreen());
+  else if (cmd === 'max') {
+    if (win.isFullScreen()) win.setFullScreen(false);
+    else if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  } else if (Array.isArray(cmd) && cmd.length === 2 && cmd.every((n) => Number.isFinite(n) && n > 0)) {
+    if (win.isFullScreen()) win.setFullScreen(false);
+    if (win.isMaximized()) win.unmaximize();
+    const wa = screen.getDisplayMatching(win.getBounds()).workAreaSize;
+    win.setSize(Math.max(MIN_W, Math.min(Math.round(cmd[0]), wa.width)), Math.max(MIN_H, Math.min(Math.round(cmd[1]), wa.height)));
+    win.center();
+  }
+  return windowState();
+});
+// 지난번 창 크기 · 위치로 연다 (그 자리가 지금 화면 밖이면 크기만)
+const MIN_W = 720, MIN_H = 480;
+function savedBounds() {
+  const b = loadConfig().window;
+  if (!b || !(b.width >= MIN_W && b.height >= MIN_H)) return { width: 1500, height: 940 };
+  const wa = screen.getDisplayMatching(b).workArea;
+  const onScreen = b.x >= wa.x - 40 && b.y >= wa.y - 40 && b.x + b.width <= wa.x + wa.width + 40 && b.y + b.height <= wa.y + wa.height + 40;
+  return onScreen ? { x: b.x, y: b.y, width: b.width, height: b.height, max: b.max } : { width: Math.min(b.width, wa.width), height: Math.min(b.height, wa.height), max: b.max };
+}
+
 // ───────── 창 ─────────
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
@@ -242,10 +271,17 @@ app.whenReady().then(async () => {
     headers.set('Content-Security-Policy', CSP);
     return new Response(res.body, { status: res.status, headers });
   });
+  const { max, ...bounds } = savedBounds();
   win = new BrowserWindow({
-    width: 1500, height: 940, minWidth: 900, minHeight: 600,
+    ...bounds, minWidth: MIN_W, minHeight: MIN_H,
     backgroundColor: '#090c14', title: 'Repopolis', autoHideMenuBar: true, icon: path.join(__dirname, 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
+  });
+  if (max) win.maximize();
+  win.on('close', () => {
+    const cfg = loadConfig();
+    cfg.window = { ...win.getNormalBounds(), max: win.isMaximized() };
+    try { saveConfig(cfg); } catch {}
   });
   // 링크(vscode:// 등)는 앱 안에서 열지 않는다
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

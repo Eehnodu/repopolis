@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld('repopolis', {
   readFile: (rel) => ipcRenderer.invoke('read-file', rel),
   pathOf: (file) => webUtils.getPathForFile(file),
   onStatus: (cb) => ipcRenderer.on('status', (_, s) => cb(s)),
+  setWindow: (cmd) => ipcRenderer.invoke('window', cmd),
+  windowState: () => ipcRenderer.invoke('window-state'),
 });
