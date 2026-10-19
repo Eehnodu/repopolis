@@ -329,7 +329,35 @@
   .seg2 button { all: unset; cursor: pointer; padding: 6px 11px; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--muted); font-size: 12px; font-weight: 600; }
   .seg2 button:hover { background: rgba(255,255,255,.12); color: var(--text); }
   .seg2 button.on { background: rgba(122, 162, 255, .28); color: #e3ebff; }
-  body:not(.app) .seg2 .app { display: none; }
+  body:not(.app) .seg2 .app, body:not(.app) .app-only { display: none; }
+
+  /* 트레이 공사 현황 팝업: 도시는 뒤에서 천천히 돌고 화면 요소는 머리줄 · 목록만 */
+  #mini { display: none; }
+  body.mini #top, body.mini #side, body.mini #detail, body.mini #hint, body.mini #labels, body.mini #tlpill,
+  body.mini #walkHud, body.mini #prompt, body.mini #settings, body.mini #tip { display: none !important; }
+  body.mini #mini { display: flex; flex-direction: column; position: fixed; inset: 0; pointer-events: none; z-index: 30; }
+  .mini-head { pointer-events: auto; -webkit-app-region: drag; display: flex; align-items: center; gap: 6px; padding: 10px 10px 18px 12px;
+    background: linear-gradient(rgba(9, 12, 20, .88), rgba(9, 12, 20, 0)); }
+  .mini-head .logo { width: 22px; height: 22px; font-size: 12px; }
+  .mini-head b { font-size: 13.5px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-head .sp { flex: 1; }
+  .mini-head button { all: unset; -webkit-app-region: no-drag; cursor: pointer; width: 26px; height: 26px; display: grid; place-items: center;
+    border-radius: 7px; background: rgba(255, 255, 255, .08); font-size: 12px; }
+  .mini-head button:hover { background: rgba(255, 255, 255, .18); }
+  .mini-head button.on { background: rgba(122, 162, 255, .4); }
+  .mini-head button.off { opacity: .45; }
+  .mini-body { pointer-events: auto; margin-top: auto; max-height: 58%; overflow: auto; padding: 10px 12px 12px;
+    background: rgba(11, 15, 24, .93); border-top: 1px solid var(--line); backdrop-filter: blur(10px); }
+  .mini-body h4 { margin: 4px 4px 6px; font-size: 11.5px; font-weight: 650; color: var(--muted); }
+  .mini-body h4 span { color: #ffcf6b; margin-left: 4px; }
+  .mini-body ol { list-style: none; margin: 0 0 8px; padding: 0; }
+  .mini-body li { padding: 6px 8px; border-radius: 8px; font-size: 12.5px; display: flex; flex-direction: column; gap: 1px; }
+  .mini-body li b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-body li span { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-body li[data-p] { cursor: pointer; }
+  .mini-body li[data-p]:hover { background: rgba(255, 255, 255, .07); }
+  .mini-body li.none { color: var(--faint); font-size: 12px; }
+  body.mini #toast { top: 52px; }
 </style>
 <script type="importmap">
   { "imports": {
@@ -432,6 +460,11 @@
     <label class="row"><span>🐦 주변 소리 <small>낮엔 새, 밤엔 귀뚜라미</small></span><input type="checkbox" class="sw" id="optAmb"></label>
     <div class="row"><span>🔊 음량</span><input type="range" id="optVol" min="0" max="100" step="1"></div>
   </section>
+  <section class="app-only">
+    <h4>앱</h4>
+    <label class="row"><span>🔔 준공 · 공사 알림 <small>창을 안 볼 때 윈도우 알림</small></span><input type="checkbox" class="sw" id="optNotify"></label>
+    <div class="row"><span>🏗️ 공사 현황 창 <small>시계 옆 트레이 아이콘을 눌러도 떠요</small></span><button class="mon-btn" id="optMini">띄우기</button></div>
+  </section>
   <section>
     <h4>화면</h4>
     <div class="row col"><span>버튼 · 글자 크기</span>
@@ -439,6 +472,17 @@
     <div class="row col"><span>창 크기 <small id="winNow"></small></span>
       <div class="seg2" id="optWin"><button data-w="1280,800" class="app">작게</button><button data-w="1600,1000" class="app">보통</button><button data-w="1920,1200" class="app">크게</button><button data-w="max" class="app">최대화</button><button data-w="full">전체 화면</button></div></div>
   </section>
+</div>
+<div id="mini">
+  <div class="mini-head"><span class="logo">🏙️</span><b id="miniName"></b><span class="sp"></span>
+    <button id="miniBell" title="준공 · 공사 알림 켜기/끄기">🔔</button>
+    <button id="miniPin" title="항상 위에 고정 (끄면 다른 곳을 누를 때 접혀요)">📌</button>
+    <button id="miniOpen" title="도시 열기">↗</button>
+    <button id="miniClose" title="닫기">✕</button></div>
+  <div class="mini-body">
+    <h4>🏗️ 지금 공사 중 <span id="miniWipN"></span></h4><ol id="miniWip"></ol>
+    <h4>🎉 최근 준공</h4><ol id="miniDone"></ol>
+  </div>
 </div>
 <div id="tip" hidden></div>
 <div id="toast" class="panel"></div>
@@ -472,6 +516,7 @@ const COMMITS = DATA.commits; // [hash, ts, authorIdx, subject, claude, touchedH
 const N = COMMITS.length;
 const HAS_GIT = DATA.git && N > 0;
 const BRIDGE = window.repopolis; // 데스크톱 앱에서만 존재
+const MINI = new URLSearchParams(location.search).has('mini'); // 트레이 공사 현황 팝업
 const store = {
   get(k) { try { return sessionStorage.getItem(k) ?? localStorage.getItem(k); } catch { return null; } },
   set(k, v, session) { try { (session ? sessionStorage : localStorage).setItem(k, v); } catch {} },
@@ -4412,7 +4457,7 @@ const sfx = {
   chime() { if (sfxOn()) [72, 76, 79, 84].forEach((n, i) => tone(sfxBus, { f: mtof(n), at: i * 0.06, a: 0.004, d: 0.5, g: 0.05, wet: 0.4 })); },
 };
 // 첫 입력 때 소리를 켠다 (어느 하나라도 켜져 있을 때만)
-const wake = () => { if (SOUND.music || SOUND.sfx || SOUND.amb) initAudio(); };
+const wake = () => { if (!MINI && (SOUND.music || SOUND.sfx || SOUND.amb)) initAudio(); };
 addEventListener('pointerdown', wake, true);
 addEventListener('keydown', wake, true);
 // 버튼 누를 때 작은 딸깍
@@ -4489,6 +4534,56 @@ $('#optWin').addEventListener('click', async (e) => {
 btnText($('#viewBtn'), walk.fp ? '👀 1인칭' : '🎥 3인칭');
 renderSitBtn();
 
+// ───────────────────────── 🏗️ 트레이 공사 현황 팝업 ─────────────────────────
+const relAgo = (ts) => {
+  const d = Date.now() / 1000 - ts;
+  return d < 60 ? '방금' : d < 3600 ? `${Math.floor(d / 60)}분 전` : d < 86400 ? `${Math.floor(d / 3600)}시간 전` : ago(ts);
+};
+function renderMini() {
+  $('#miniName').textContent = DATA.name;
+  const wip = files.filter((f) => f.wip).sort((a, b) => b.l - a.l);
+  $('#miniWipN').textContent = wip.length ? `${wip.length}곳` : '';
+  $('#miniWip').innerHTML = wip.length
+    ? wip.slice(0, 40).map((f) => `<li data-p="${esc(f.p)}" title="눌러서 도시에서 보기"><b>${esc(f.name)}</b><span>${esc(f.p.slice(0, -f.name.length) || './')} · ${fmt(f.l)}줄</span></li>`).join('')
+    : '<li class="none">지금은 조용해요 — 고친 파일이 생기면 여기 떠요</li>';
+  $('#miniDone').innerHTML = COMMITS.slice(-6).reverse()
+    .map((c) => `<li><b>${c[4] ? '🤖 ' : ''}${esc(c[3])}</b><span>${esc(DATA.authors[c[2]] || '')} · ${relAgo(c[1])}</span></li>`).join('')
+    || '<li class="none">아직 커밋이 없어요</li>';
+}
+function startMini() {
+  document.body.classList.add('mini');
+  renderer.setPixelRatio(1);
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 0.7;
+  controls.target.set(0, 0, 0);
+  camera.position.copy(viewFrom(new THREE.Vector3(0, 0, 0), clamp(S * 1.15, 22, 240), 0.95));
+  controls.update();
+  renderMini();
+  setInterval(renderMini, 30000); // "n분 전" 갱신
+  $('#miniWip').addEventListener('click', (e) => { const li = e.target.closest('[data-p]'); if (li) BRIDGE?.focusFile(li.dataset.p); });
+  $('#miniOpen').addEventListener('click', () => BRIDGE?.showMain());
+  $('#miniClose').addEventListener('click', () => BRIDGE?.mini('close'));
+  $('#miniPin').addEventListener('click', async () => { $('#miniPin').classList.toggle('on', !!(await BRIDGE?.mini('pin'))); });
+  const bell = (on) => $('#miniBell').classList.toggle('off', !on);
+  BRIDGE?.getNotify?.().then(bell);
+  $('#miniBell').addEventListener('click', async () => bell(await BRIDGE.setNotify($('#miniBell').classList.contains('off'))));
+  // 도시를 두 번 누르면 큰 창으로
+  renderer.domElement.addEventListener('dblclick', (e) => { e.stopImmediatePropagation(); BRIDGE?.showMain(); }, true);
+}
+// 팝업에서 고른 공사 중 건물로 큰 창이 날아간다
+BRIDGE?.onFocusFile?.((p) => {
+  const f = files.find((x) => x.p === p);
+  if (!f) return;
+  if (mode === 'orbit') select(f.i, true);
+  else if (mode === 'walk') stopWalk().then(() => select(f.i, true));
+  else toast(`🏗️ ${f.name} — 건물 밖으로 나가면 보여요`);
+});
+if (BRIDGE?.getNotify) {
+  $('#optNotify').addEventListener('change', (e) => BRIDGE.setNotify(e.target.checked));
+  $('#optMini').addEventListener('click', () => BRIDGE.mini('open'));
+  $('#setBtn').addEventListener('click', () => BRIDGE.getNotify().then((v) => { $('#optNotify').checked = v; }));
+}
+
 // ───────────────────────── 시작 ─────────────────────────
 const CAM_KEY = `cc-cam-${DATA.root}`;
 // 보던 상태도 함께 남긴다 — 앱이 커밋 · 수정을 보고 도시를 다시 그릴 때(#live) 걷기 · 건물 안 · 열어 둔 코드로 돌아오게
@@ -4560,9 +4655,10 @@ if (hash.has('select')) {
   }
 }
 if (hash.has('walk')) setTimeout(startWalk, 2200);
-else if (live) restoreView();
+else if (live && !MINI) restoreView();
 if (HAS_GIT && hash.get('play') === '1' && state.time < N) setPlaying(true);
 if (hash.get('toast')) toast(hash.get('toast'));
+if (MINI) startMini();
 
 const selBox = new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: '#ffffff' }));
 const pin = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.2, 4), new THREE.MeshBasicMaterial({ color: '#ff5a5a' }));
@@ -4571,7 +4667,9 @@ selBox.visible = pin.visible = false;
 scene.add(selBox, pin);
 
 const clock = new THREE.Clock();
+let miniLast = 0;
 renderer.setAnimationLoop(() => {
+  if (MINI) { const now = performance.now(); if (now - miniLast < 32) return; miniLast = now; }
   const dt = Math.min(clock.getDelta(), 0.05);
   const time = clock.elapsedTime;
 
@@ -4638,7 +4736,7 @@ renderer.setAnimationLoop(() => {
   else if (mode === 'orbit') { controls.update(); camTarget.copy(controls.target); }
 
   if (mode === 'orbit' && (mouseDirty || moved || tween)) { pick(); mouseDirty = false; }
-  if (night > 0.03) composer.render(); else renderer.render(scene, camera);
+  if (night > 0.03 && !MINI) composer.render(); else renderer.render(scene, camera);
   if (shotPending) saveShot();
   updateLabels();
 });

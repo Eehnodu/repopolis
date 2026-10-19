@@ -11,7 +11,7 @@ if (typeof electron === 'string' || !electron.app) {
   process.exit(0);
 }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen } = electron;
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen, Tray, Menu, Notification, nativeImage } = electron;
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { Worker } = require('worker_threads');
@@ -78,6 +78,8 @@ function git(args, cwd) {
 function showCity(data, hash) {
   fs.writeFileSync(cityFile(), renderHtml(data, { assets: LOCAL_ASSETS }));
   win.setTitle(`Repopolis — ${data.name}`);
+  updateTray(data);
+  if (mini && !mini.isDestroyed()) { if (mini.isVisible()) loadMini(hash); else mini.dirty = true; }
   return win.loadURL(`${ORIGIN}/city.html?v=${Date.now()}${hash ? `#${hash}` : ''}`); // 해시만 바뀌면 새로고침이 안 되므로
 }
 
@@ -160,6 +162,12 @@ async function refresh(proj) {
       params.set('toast', newN - oldN === 1 ? `🎉 준공! ${subject}` : `🎉 새 커밋 ${newN - oldN}개 — ${subject}`);
     } else if (wipNow !== wipBefore) {
       params.set('toast', wipNow > wipBefore ? `🏗️ 공사 시작 — 공사 중 ${wipNow}곳` : `🏗️ 공사 중 ${wipNow}곳`);
+    }
+    if (newN > oldN) notify(`🎉 준공! — ${data.name}`, data.commits[newN - 1][3]);
+    else if (wipNow > wipBefore) {
+      const was = new Set(before.files.filter((f) => f.wip).map((f) => f.p));
+      const fresh = data.files.find((f) => f.wip && !was.has(f.p));
+      notify(`🏗️ 공사 시작 — ${data.name}`, `${fresh ? fresh.p : ''} · 공사 중 ${wipNow}곳`);
     }
     await showCity(data, params.toString());
   } catch (e) {
@@ -256,9 +264,116 @@ function savedBounds() {
   return onScreen ? { x: b.x, y: b.y, width: b.width, height: b.height, max: b.max } : { width: Math.min(b.width, wa.width), height: Math.min(b.height, wa.height), max: b.max };
 }
 
+// ───────── 트레이 · 공사 현황 팝업 · 알림 ─────────
+// 작업 표시줄 시계 옆 아이콘: 왼쪽 클릭 = 공사 현황 팝업(작은 도시 + 공사 중 · 최근 준공), 오른쪽 클릭 = 메뉴.
+// 창을 닫아도 트레이에서 계속 지켜보다가 커밋 · 새 공사가 생기면 윈도우 알림을 띄운다
+let tray = null, mini = null;
+const MINI_W = 340, MINI_H = 500;
+const notifyOn = () => loadConfig().notify !== false;
+function showMain() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+function notify(title, body) {
+  if (!notifyOn() || !Notification.isSupported() || (win && win.isFocused())) return; // 창을 보고 있으면 화면 안 알림으로 충분하다
+  const n = new Notification({ title, body, icon: path.join(__dirname, 'icon.png'), silent: false });
+  n.on('click', showMain);
+  n.show();
+}
+function trayMenu() {
+  const d = current?.data, wip = d ? d.files.filter((f) => f.wip) : [];
+  return Menu.buildFromTemplate([
+    { label: d ? `🏙️ ${d.name}` : '🏙️ Repopolis', enabled: false },
+    { label: d ? (wip.length ? `🏗️ 공사 중 ${wip.length}곳` : '🏗️ 공사 중인 곳 없음') : '열린 프로젝트 없음', enabled: false },
+    ...wip.slice(0, 6).map((f) => ({ label: `   ${f.p}`, click: () => focusFile(f.p) })),
+    { type: 'separator' },
+    { label: '도시 열기', click: showMain },
+    { label: '공사 현황 보기', click: () => toggleMini(true) },
+    { label: '준공 · 공사 알림', type: 'checkbox', checked: notifyOn(), click: (it) => setNotify(it.checked) },
+    { type: 'separator' },
+    { label: '끝내기', click: () => { app.isQuitting = true; app.quit(); } },
+  ]);
+}
+function updateTray(data) {
+  if (!tray) return;
+  const wip = data ? data.files.filter((f) => f.wip).length : 0;
+  tray.setToolTip(data ? `Repopolis · ${data.name}${wip ? ` · 🏗️ 공사 중 ${wip}곳` : ''}` : 'Repopolis');
+  tray.setContextMenu(trayMenu());
+}
+function setNotify(on) {
+  const cfg = loadConfig();
+  cfg.notify = !!on;
+  saveConfig(cfg);
+  updateTray(current?.data);
+  return cfg.notify;
+}
+function createTray() {
+  const img = nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 16, height: 16 });
+  tray = new Tray(img);
+  tray.on('click', () => toggleMini());
+  tray.on('double-click', showMain);
+  updateTray(current?.data);
+}
+// 팝업은 트레이 아이콘 바로 위(작업 표시줄이 위 · 옆이면 그쪽)에 붙인다
+function placeMini() {
+  const b = tray.getBounds(), wa = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea;
+  let x = Math.round(b.x + b.width / 2 - MINI_W / 2), y = wa.y + wa.height - MINI_H - 8;
+  if (b.y < wa.y) y = wa.y + 8;
+  if (b.x < wa.x) x = wa.x + 8;
+  else if (b.x >= wa.x + wa.width) x = wa.x + wa.width - MINI_W - 8;
+  x = Math.min(Math.max(x, wa.x + 8), wa.x + wa.width - MINI_W - 8);
+  mini.setBounds({ x, y, width: MINI_W, height: MINI_H });
+}
+function loadMini(hash = '') {
+  mini.dirty = false;
+  const h = new URLSearchParams(hash);
+  h.set('live', '1');
+  return mini.loadURL(current ? `${ORIGIN}/city.html?mini=1&v=${Date.now()}#${h}` : LAUNCHER);
+}
+function toggleMini(force) {
+  if (!current) return showMain(); // 열린 프로젝트가 없으면 고르는 화면으로
+  if (!mini || mini.isDestroyed()) {
+    mini = new BrowserWindow({
+      width: MINI_W, height: MINI_H, show: false, frame: false, resizable: false, skipTaskbar: true, alwaysOnTop: true,
+      backgroundColor: '#0b0f18', title: 'Repopolis 공사 현황', icon: path.join(__dirname, 'icon.png'),
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
+    });
+    mini.pinned = false;
+    mini.dirty = true;
+    mini.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    mini.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(ORIGIN)) e.preventDefault(); });
+    // 다른 곳을 누르면 접힌다 (고정했으면 그대로)
+    mini.on('blur', () => { if (!mini.pinned && !mini.isDestroyed()) mini.hide(); });
+  }
+  const show = force ?? !mini.isVisible();
+  if (!show) return mini.hide();
+  if (!mini.pinned) placeMini();
+  if (mini.dirty) loadMini();
+  mini.show();
+  mini.focus();
+}
+function focusFile(rel) {
+  showMain();
+  win.webContents.send('focus-file', rel);
+}
+handle('show-main', () => showMain());
+handle('focus-file', (_, rel) => { if (typeof rel === 'string') focusFile(rel); });
+handle('mini', (_, cmd) => {
+  if (cmd === 'open') return toggleMini(true);
+  if (cmd === 'close') return mini?.hide();
+  if (cmd === 'pin' && mini && !mini.isDestroyed()) { mini.pinned = !mini.pinned; mini.setAlwaysOnTop(true); return mini.pinned; }
+  return null;
+});
+handle('notify-get', () => notifyOn());
+handle('notify-set', (_, on) => setNotify(on));
+
 // ───────── 창 ─────────
 if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+app.on('second-instance', showMain);
+app.on('before-quit', () => { app.isQuitting = true; });
+if (process.platform === 'win32') app.setAppUserModelId('com.repopolis.app');
 
 app.whenReady().then(async () => {
   protocol.handle('app', async (req) => {
@@ -278,11 +393,18 @@ app.whenReady().then(async () => {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
   });
   if (max) win.maximize();
-  win.on('close', () => {
+  win.on('close', (e) => {
     const cfg = loadConfig();
     cfg.window = { ...win.getNormalBounds(), max: win.isMaximized() };
+    // 닫기 = 트레이로 내리기 (계속 지켜본다). 끝내려면 트레이 메뉴의 '끝내기'
+    if (tray && !app.isQuitting) {
+      e.preventDefault();
+      win.hide();
+      if (!cfg.trayHinted) { cfg.trayHinted = true; notify('Repopolis 는 트레이에서 계속 지켜봐요', '시계 옆 아이콘을 누르면 공사 현황, 오른쪽 클릭하면 끝내기가 있어요'); }
+    }
     try { saveConfig(cfg); } catch {}
   });
+  createTray();
   // 링크(vscode:// 등)는 앱 안에서 열지 않는다
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(ORIGIN)) e.preventDefault(); });
@@ -292,3 +414,4 @@ app.whenReady().then(async () => {
   if (last && fs.existsSync(last)) openProject(last);
 });
 app.on('window-all-closed', () => { stopWatching(); app.quit(); });
+app.on('will-quit', () => { tray?.destroy(); });

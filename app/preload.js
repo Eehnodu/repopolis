@@ -12,5 +12,11 @@ contextBridge.exposeInMainWorld('repopolis', {
   pathOf: (file) => webUtils.getPathForFile(file),
   onStatus: (cb) => ipcRenderer.on('status', (_, s) => cb(s)),
   setWindow: (cmd) => ipcRenderer.invoke('window', cmd),
+  showMain: () => ipcRenderer.invoke('show-main'),
+  focusFile: (rel) => ipcRenderer.invoke('focus-file', rel),
+  onFocusFile: (cb) => ipcRenderer.on('focus-file', (_, rel) => cb(rel)),
+  mini: (cmd) => ipcRenderer.invoke('mini', cmd),
+  getNotify: () => ipcRenderer.invoke('notify-get'),
+  setNotify: (on) => ipcRenderer.invoke('notify-set', on),
   windowState: () => ipcRenderer.invoke('window-state'),
 });
