@@ -19,4 +19,10 @@ contextBridge.exposeInMainWorld('repopolis', {
   getNotify: () => ipcRenderer.invoke('notify-get'),
   setNotify: (on) => ipcRenderer.invoke('notify-set', on),
   windowState: () => ipcRenderer.invoke('window-state'),
+  updateState: () => ipcRenderer.invoke('update-state'),
+  updateCheck: () => ipcRenderer.invoke('update-check'),
+  updateDownload: () => ipcRenderer.invoke('update-download'),
+  updateInstall: () => ipcRenderer.invoke('update-install'),
+  updatePage: () => ipcRenderer.invoke('update-page'),
+  onUpdate: (cb) => ipcRenderer.on('update', (_, s) => cb(s)),
 });

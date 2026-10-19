@@ -17,6 +17,7 @@ const { pathToFileURL } = require('url');
 const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
 const { renderHtml, gitConfigIsRisky } = require('../scan.js');
+const updater = require('./updater');
 
 const WIP_POLL_MS = 12000;
 const debug = (...a) => process.env.CC_DEBUG && console.log('[cc]', ...a);
@@ -282,9 +283,20 @@ function notify(title, body) {
   n.on('click', showMain);
   n.show();
 }
+function updateItems() {
+  const u = updater.state();
+  if (u.status === 'available') return [{ label: `⬆️ 새 버전 ${u.version} 받기`, click: () => { showMain(); updater.download(); } }, { type: 'separator' }];
+  if (u.status === 'downloading') return [{ label: `⬇️ 새 버전 받는 중 ${Math.round(u.progress * 100)}%`, enabled: false }, { type: 'separator' }];
+  if (u.status === 'ready') return [{ label: `🔄 다시 시작해서 ${u.version} 으로 업데이트`, click: installUpdate }, { type: 'separator' }];
+  return [];
+}
+function installUpdate() {
+  return updater.install(() => { app.isQuitting = true; app.quit(); });
+}
 function trayMenu() {
   const d = current?.data, wip = d ? d.files.filter((f) => f.wip) : [];
   return Menu.buildFromTemplate([
+    ...updateItems(),
     { label: d ? `🏙️ ${d.name}` : '🏙️ Repopolis', enabled: false },
     { label: d ? (wip.length ? `🏗️ 공사 중 ${wip.length}곳` : '🏗️ 공사 중인 곳 없음') : '열린 프로젝트 없음', enabled: false },
     ...wip.slice(0, 6).map((f) => ({ label: `   ${f.p}`, click: () => focusFile(f.p) })),
@@ -367,6 +379,21 @@ handle('mini', (_, cmd) => {
   return null;
 });
 handle('notify-get', () => notifyOn());
+// 새 버전 (확인 · 받기 · 바꾸고 다시 켜기)
+handle('update-state', () => updater.state());
+handle('update-check', () => updater.check());
+handle('update-download', () => updater.download());
+handle('update-install', () => installUpdate());
+handle('update-page', () => updater.openPage());
+let updateNotified = null;
+function onUpdate(s) {
+  for (const w of [win, mini]) if (w && !w.isDestroyed()) w.webContents.send('update', s);
+  if (s.status !== 'downloading' || s.progress >= 1) updateTray(current?.data);
+  if (s.status === 'available' && updateNotified !== s.version) {
+    updateNotified = s.version;
+    notify(`⬆️ Repopolis ${s.version} 이 나왔어요`, '위쪽 새 버전 버튼이나 트레이 메뉴에서 받을 수 있어요');
+  }
+}
 handle('notify-set', (_, on) => setNotify(on));
 
 // ───────── 창 ─────────
@@ -406,6 +433,7 @@ app.whenReady().then(async () => {
     try { saveConfig(cfg); } catch {}
   });
   createTray();
+  updater.start(onUpdate);
   // 링크(vscode:// 등)는 앱 안에서 열지 않는다
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(ORIGIN)) e.preventDefault(); });

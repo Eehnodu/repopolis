@@ -57,6 +57,8 @@
   .tbtn:hover { border-color: var(--line-strong); background: rgba(30, 38, 58, 0.9); }
   .tbtn.on { border-color: rgba(122, 162, 255, .6); color: #cfe0ff; }
   .tbtn:disabled { opacity: .4; cursor: default; }
+  .tbtn.upd { border-color: rgba(52, 211, 153, .55); color: #a7f3d0; }
+  .tbtn.upd:hover { background: rgba(16, 80, 60, .85); }
   .chips { display: flex; gap: 6px; margin-left: 4px; }
   .chip { padding: 0 11px; height: 32px; display: flex; align-items: center; font-size: 12px; color: var(--muted); white-space: nowrap; }
   .chip b { color: var(--text); font-weight: 650; margin-left: 5px; font-variant-numeric: tabular-nums; }
@@ -377,6 +379,7 @@
 
 <header id="top">
   <div class="brand panel"><span class="logo">🏙️</span><b>Repopolis</b><span class="proj">__CITY_TITLE__</span><span class="live" id="live">LIVE</span></div>
+  <button class="tbtn panel upd" id="updBtn" hidden></button>
   <button class="tbtn panel" id="projectBtn" title="프로젝트 바꾸기" hidden><span class="ic">📂</span><span class="t">프로젝트</span></button>
   <button class="tbtn panel" id="walkBtn" title="도시를 걸어다니기"><span class="ic">🚶</span><span class="t">걸어보기</span></button>
   <button class="tbtn panel" id="tlBtn" title="첫 커밋부터 도시가 지어지는 과정 (Space)" hidden><span class="ic">🎬</span><span class="t">타임랩스</span></button>
@@ -468,6 +471,7 @@
     <h4>앱</h4>
     <label class="row"><span>🔔 준공 · 공사 알림 <small>창을 안 볼 때 윈도우 알림</small></span><input type="checkbox" class="sw" id="optNotify"></label>
     <div class="row"><span>🏗️ 공사 현황 창 <small>시계 옆 트레이 아이콘을 눌러도 떠요</small></span><button class="mon-btn" id="optMini">띄우기</button></div>
+    <div class="row"><span>⬆️ 업데이트 <small id="updInfo"></small></span><button class="mon-btn" id="optUpd">확인</button></div>
   </section>
   <section>
     <h4>화면</h4>
@@ -4582,6 +4586,30 @@ BRIDGE?.onFocusFile?.((p) => {
   else if (mode === 'walk') stopWalk().then(() => select(f.i, true));
   else toast(`🏗️ ${f.name} — 건물 밖으로 나가면 보여요`);
 });
+// ⬆️ 새 버전 — 위쪽 버튼 · 설정 줄 하나로: 확인 → 받기(진행률) → 다시 시작해서 업데이트
+if (BRIDGE?.updateState) {
+  let asked = false;
+  const act = (s) => (s.status === 'available' ? BRIDGE.updateDownload() : s.status === 'ready' ? BRIDGE.updateInstall()
+    : s.status === 'downloading' || s.status === 'checking' ? null : (asked = true, BRIDGE.updateCheck()));
+  let last = null;
+  const renderUpd = (s) => {
+    last = s;
+    const pct = `${Math.round((s.progress || 0) * 100)}%`;
+    const top = { available: `⬆️ 새 버전 ${s.version}`, downloading: `⬇️ 받는 중 ${pct}`, ready: '🔄 다시 시작해서 업데이트' }[s.status];
+    $('#updBtn').hidden = !top;
+    if (top) $('#updBtn').textContent = top;
+    $('#updBtn').title = s.error ? `다시 시도 — ${s.error}` : s.status === 'available' ? '눌러서 받기' : '';
+    $('#optUpd').textContent = { checking: '확인 중…', available: '받기', downloading: pct, ready: '다시 시작' }[s.status] || '확인';
+    $('#updInfo').textContent = s.error ? `실패 — ${s.error}` : s.status === 'available' ? `${s.current} → ${s.version}`
+      : s.status === 'ready' ? `${s.version} 준비됨` : s.status === 'latest' ? `${s.current} · 최신이에요` : `지금 ${s.current}`;
+    if (asked && s.status === 'latest') { asked = false; toast(`✅ 최신 버전이에요 (${s.current})`); }
+    if (asked && s.status === 'error') { asked = false; toast(`⚠️ 새 버전을 확인하지 못했어요 — ${s.error}`); }
+  };
+  BRIDGE.onUpdate(renderUpd);
+  BRIDGE.updateState().then(renderUpd);
+  $('#updBtn').addEventListener('click', () => last && act(last));
+  $('#optUpd').addEventListener('click', () => last && act(last));
+}
 if (BRIDGE?.getNotify) {
   $('#optNotify').addEventListener('change', (e) => BRIDGE.setNotify(e.target.checked));
   $('#optMini').addEventListener('click', () => BRIDGE.mini('open'));

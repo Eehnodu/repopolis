@@ -37,6 +37,9 @@
   .empty { color: var(--faint); font-size: 13px; }
   .err { margin-top: 14px; color: #ff7b7b; font-size: 13px; }
   .loading { position: fixed; inset: 0; display: none; place-items: center; background: rgba(9,12,20,.92); z-index: 5; }
+  .upd { all: unset; cursor: pointer; display: block; margin-top: 14px; padding: 10px 14px; border-radius: 12px; background: rgba(16, 80, 60, .35);
+    border: 1px solid rgba(52, 211, 153, .45); color: #a7f3d0; font-weight: 650; }
+  .upd:hover { background: rgba(16, 80, 60, .6); }
   .loading.on { display: grid; }
   .loading div { text-align: center; }
   .loading b { display: block; font-size: 18px; margin-bottom: 14px; }
@@ -57,6 +60,7 @@
     <span>클릭하거나 폴더를 여기로 끌어다 놓으세요</span>
   </div>
   <div class="err" id="err" hidden></div>
+  <button class="upd" id="upd" hidden></button>
   <h2>최근 프로젝트</h2>
   <div class="list" id="list"><div class="empty">아직 없어요</div></div>
 </main>
@@ -102,6 +106,18 @@
     if (f) cc.openProject(cc.pathOf(f));
   });
   renderRecent();
+
+  // 새 버전이 있으면 시작 화면에도
+  let upd = null;
+  const showUpd = (s) => {
+    upd = s;
+    const t = { available: `⬆️ 새 버전 ${s.version} 받기`, downloading: `⬇️ 새 버전 받는 중 ${Math.round(s.progress * 100)}%`, ready: `🔄 다시 시작해서 ${s.version} 으로 업데이트` }[s.status];
+    $('#upd').hidden = !t;
+    if (t) $('#upd').textContent = t;
+  };
+  cc.onUpdate?.(showUpd);
+  cc.updateState?.().then(showUpd);
+  $('#upd').addEventListener('click', () => (upd?.status === 'available' ? cc.updateDownload() : upd?.status === 'ready' ? cc.updateInstall() : null));
 </script>
 </body>
 </html>
