@@ -285,13 +285,47 @@ function notify(title, body) {
 }
 function updateItems() {
   const u = updater.state();
-  if (u.status === 'available') return [{ label: `⬆️ 새 버전 ${u.version} 받기`, click: () => { showMain(); updater.download(); } }, { type: 'separator' }];
+  if (u.status === 'available') return [{ label: `⬆️ 새 버전 ${u.version} 받기…`, click: () => { showMain(); promptUpdate(); } }, { type: 'separator' }];
   if (u.status === 'downloading') return [{ label: `⬇️ 새 버전 받는 중 ${Math.round(u.progress * 100)}%`, enabled: false }, { type: 'separator' }];
-  if (u.status === 'ready') return [{ label: `🔄 다시 시작해서 ${u.version} 으로 업데이트`, click: installUpdate }, { type: 'separator' }];
+  if (u.status === 'ready') return [{ label: `🔄 다시 시작해서 ${u.version} 으로 업데이트…`, click: () => { showMain(); promptUpdate(); } }, { type: 'separator' }];
   return [];
 }
 function installUpdate() {
   return updater.install(() => { app.isQuitting = true; app.quit(); });
+}
+// 강제로 받거나 바꾸지 않는다 — 받기 전 · 바꾸기 전에 한 번씩 물어본다
+let prompting = false;
+const dialogParent = () => (win && !win.isDestroyed() && win.isVisible() ? win : undefined);
+async function promptUpdate() {
+  if (prompting) return updater.state();
+  prompting = true;
+  try {
+    let u = updater.state();
+    if (u.status === 'available') {
+      const { response } = await dialog.showMessageBox(dialogParent(), {
+        type: 'info', title: 'Repopolis 새 버전', noLink: true, defaultId: 0, cancelId: 1,
+        message: `새 버전 ${u.version} 이 나왔어요`,
+        detail: `지금 ${u.current} → ${u.version}${u.notes ? `\n\n${u.notes}` : ''}\n\n받은 뒤 다시 시작하면 바뀌어요. 받는 동안에도 계속 쓸 수 있어요.`,
+        buttons: ['받기', '나중에', '바뀐 점 보기'],
+      });
+      if (response === 2) updater.openPage();
+      if (response !== 0) return updater.state();
+      u = await updater.download();
+      if (u.status !== 'ready') return u;
+    }
+    if (u.status === 'ready') {
+      const { response } = await dialog.showMessageBox(dialogParent(), {
+        type: 'info', title: 'Repopolis 새 버전', noLink: true, defaultId: 0, cancelId: 1,
+        message: `${u.version} 을 다 받았어요`,
+        detail: '지금 다시 시작해서 업데이트할까요? 보던 프로젝트는 다시 열려요.\n나중에 하려면 위쪽 버튼이나 트레이 메뉴에서 할 수 있어요.',
+        buttons: ['다시 시작', '나중에'],
+      });
+      if (response === 0) await installUpdate();
+    }
+    return updater.state();
+  } finally {
+    prompting = false;
+  }
 }
 function trayMenu() {
   const d = current?.data, wip = d ? d.files.filter((f) => f.wip) : [];
@@ -382,16 +416,22 @@ handle('notify-get', () => notifyOn());
 // 새 버전 (확인 · 받기 · 바꾸고 다시 켜기)
 handle('update-state', () => updater.state());
 handle('update-check', () => updater.check());
-handle('update-download', () => updater.download());
-handle('update-install', () => installUpdate());
+handle('update-download', () => promptUpdate()); // 화면의 버튼도 확인 창을 거친다
+handle('update-install', () => promptUpdate());
 handle('update-page', () => updater.openPage());
 let updateNotified = null;
 function onUpdate(s) {
   for (const w of [win, mini]) if (w && !w.isDestroyed()) w.webContents.send('update', s);
   if (s.status !== 'downloading' || s.progress >= 1) updateTray(current?.data);
+  // 새 버전을 처음 찾았을 때 한 번만: 창을 보고 있으면 확인 창, 트레이에 있으면 알림(누르면 확인 창)
   if (s.status === 'available' && updateNotified !== s.version) {
     updateNotified = s.version;
-    notify(`⬆️ Repopolis ${s.version} 이 나왔어요`, '위쪽 새 버전 버튼이나 트레이 메뉴에서 받을 수 있어요');
+    if (dialogParent()) promptUpdate();
+    else if (Notification.isSupported()) {
+      const n = new Notification({ title: `⬆️ Repopolis ${s.version} 이 나왔어요`, body: '눌러서 받을지 고르세요', icon: path.join(__dirname, 'icon.png') });
+      n.on('click', () => { showMain(); promptUpdate(); });
+      n.show();
+    }
   }
 }
 handle('notify-set', (_, on) => setNotify(on));

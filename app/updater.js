@@ -16,7 +16,7 @@ const ASSET = process.platform === 'win32' ? 'Repopolis-windows.exe'
 
 // status: idle · checking · latest · available · downloading · ready · error
 // REPOPOLIS_FAKE_VERSION: 업데이트 흐름을 시험할 때만 지금 버전을 낮춰 보이게
-const state = { status: 'idle', current: process.env.REPOPOLIS_FAKE_VERSION || app.getVersion(), version: null, url: PAGE, progress: 0, error: null, manual: false };
+const state = { status: 'idle', current: process.env.REPOPOLIS_FAKE_VERSION || app.getVersion(), version: null, url: PAGE, notes: '', progress: 0, error: null, manual: false };
 let listeners = [];
 let asset = null; // { url, size }
 let downloaded = null;
@@ -43,9 +43,13 @@ async function check({ quiet = false } = {}) {
     const version = String(rel.tag_name || '').replace(/^v/, '');
     const a = (rel.assets || []).find((x) => x.name === ASSET);
     asset = a ? { url: a.browser_download_url, size: a.size } : null;
+    // 릴리스 노트에서 글머리표만 짧게 — 확인 창에 "바뀐 점" 으로 보여 준다
+    const notes = String(rel.body || '').split(/\r?\n/).filter((l) => /^\s*[-*] /.test(l))
+      .map((l) => l.replace(/^\s*[-*] /, '• ').replace(/\*\*|`/g, '').replace(/\s+—.*$/, '')).slice(0, 6)
+      .map((l) => (l.length > 70 ? `${l.slice(0, 69)}…` : l)).join('\n');
     const url = typeof rel.html_url === 'string' && rel.html_url.startsWith(`https://github.com/${REPO}/`) ? rel.html_url : PAGE;
     if (!/^\d+\.\d+\.\d+$/.test(version) || !newer(version, state.current)) set({ status: 'latest', version, url });
-    else set({ status: 'available', version, url, manual: !asset });
+    else set({ status: 'available', version, url, notes, manual: !asset });
   } catch (e) {
     // 인터넷이 없을 때 자동 확인은 조용히 넘긴다
     set(quiet ? { status: 'idle' } : { status: 'error', error: e.message });
