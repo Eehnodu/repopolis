@@ -320,6 +320,10 @@
   #settings .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; cursor: pointer; }
   #settings .row.col { flex-direction: column; align-items: stretch; gap: 8px; cursor: default; }
   #settings small { color: var(--faint); font-size: 11px; margin-left: 4px; }
+  /* 설명은 제목 아래 한 줄로, 오른쪽 버튼 · 스위치는 줄지 않게 — 좁은 창에서 둘 다 꺾이던 것 */
+  #settings .row:not(.col) > span:first-child { min-width: 0; }
+  #settings .row:not(.col) small { display: block; margin: 1px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #settings .row > .mon-btn, #settings .row > .sw { flex: none; white-space: nowrap; }
   #settings input[type=range] { width: 150px; accent-color: var(--accent); }
   .sw { appearance: none; -webkit-appearance: none; margin: 0; flex: none; width: 38px; height: 22px; border-radius: 99px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; transition: background .2s; }
   .sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .2s; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
