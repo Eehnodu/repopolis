@@ -548,8 +548,9 @@ function dimsFor(f, t) {
 }
 
 // ───────────────────────── 배치 (squarified treemap) ─────────────────────────
-// INSET: 구역 둘레 도로 폭의 절반 / PAD: 구역 안쪽 여백
-const INSET = (d) => (d === 0 ? 0 : d === 1 ? 1.7 : d === 2 ? 1.0 : 0.35);
+// INSET: 구역 테두리에서 바닥(보도)이 시작하는 곳 — 1단은 큰길 폭의 절반, 2단은 골목(양방향 두 차선) 폭 / PAD: 구역 안쪽 여백
+const ALLEY_W = 2.0;
+const INSET = (d) => (d === 0 ? 0 : d === 1 ? 1.7 : d === 2 ? ALLEY_W : 0.35);
 const PAD = (d) => (d === 0 ? 2.4 : INSET(d) + 0.55);
 const topY = (d) => 0.1 + d * 0.08;
 
@@ -617,9 +618,9 @@ function layout(node, rect, anc) {
   const inner = { x: rect.x + pad, y: rect.y + pad, w: Math.max(0.01, rect.w - pad * 2), h: Math.max(0.01, rect.h - pad * 2) };
   const items = [...node.dirs.values(), ...node.files];
   const rects = squarify(items, inner);
-  // 하위 폴더(구역) 둘레 도로는 구역 경계선 양쪽으로 반씩 걸친다 — 옆에 붙은 파일 필지는 그쪽을 도로 반폭만큼 비워
-  // 차가 마당 위로 다니지 않게 한다
-  const dirRects = items.map((it, k) => (it.dirs ? rects[k] : null)).filter(Boolean), road = INSET(node.depth + 1) + 0.15;
+  // 하위 폴더(구역) 옆에 붙은 파일 필지는 그쪽을 조금 비운다 — 골목은 구역 테두리 안쪽에 있으니 보도 폭만큼,
+  // 더 깊은 구역은 둘레 길 폭만큼
+  const dirRects = items.map((it, k) => (it.dirs ? rects[k] : null)).filter(Boolean), road = node.depth + 1 === 2 ? 0.6 : INSET(node.depth + 1) + 0.15;
   const touches = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0) > 1e-3;
   items.forEach((it, k) => {
     const r = rects[k];
@@ -818,17 +819,23 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// 구역 바닥: 0단 = 큰길(아스팔트), 1단 = 골목, 그 안쪽 = 보도
-const DIST_COLORS = ['#3a3f48', '#4b515b', '#bdb7aa', '#c8c2b5', '#b2ac9f'].map(C);
+// 구역 바닥: 0단 = 큰길(아스팔트), 1단 = 큰길가 보도(회색 콘크리트), 2단 이상 = 블록 안 보도(베이지).
+// 골목은 2단 구역 둘레의 띠(구역 테두리 ~ 보도 사이, 폭 ALLEY_W)를 아스팔트로 칠한 양방향 두 차선이다
+const DIST_COLORS = ['#3a3f48', '#a6a196', '#bdb7aa', '#c8c2b5', '#b2ac9f'].map(C);
 const distMesh = inst(box, groundMat, districts.length, { cast: false });
 const distVisible = new Uint8Array(districts.length).fill(1);
+const alleyMesh = inst(box, groundMat, districts.length, { cast: false });
 function writeDistricts() {
   districts.forEach((d, k) => {
     const v = d.vis;
+    alleyMesh.setColorAt(k, DIST_COLORS[0]);
+    if (d.depth === 2 && distVisible[k]) put(alleyMesh, k, d.x + d.w / 2, topY(1) - 0.096, d.y + d.h / 2, d.w, 0.1, d.h);
+    else alleyMesh.setMatrixAt(k, ZERO);
     if (!distVisible[k] || v.w <= 0 || v.h <= 0) { distMesh.setMatrixAt(k, ZERO); return; }
     put(distMesh, k, v.x + v.w / 2, topY(d.depth) - 0.1, v.y + v.h / 2, v.w, 0.1, v.h);
   });
   distMesh.instanceMatrix.needsUpdate = true;
+  alleyMesh.instanceMatrix.needsUpdate = true;
 }
 writeDistricts();
 
@@ -905,34 +912,38 @@ treeSpots.forEach(([x, y, z, s], k) => {
   }
 });
 
-// 도로: 1단 구역 둘레가 큰길, 2단 구역 둘레가 골목
+// 도로: 1단 구역 둘레가 큰길, 2단 구역 둘레 안쪽 띠가 골목 — 둘 다 양방향 두 차선(dir 1 은 안쪽 차선)
+const laneOf = (ring, dir) => (ring.main ? 0.62 * dir : ALLEY_W * (dir > 0 ? 0.75 : 0.25));
+// 고리 위 s 지점에서 안쪽(+) / 바깥(-)으로 lateral 만큼 떨어진 자리. 차선은 그만큼 줄이거나 늘린 사각형을 따라
+// 같은 비율로 가므로 모서리에서 제 차선의 모서리로 꺾는다 (테두리 모서리까지 갔다 꺾으면 보도로 삐져나간다)
 function onRing(r, s, lateral) {
-  const { x, y: z, w, h } = r;
-  let px, pz, tx, tz, nx, nz;
-  if (s < w) { px = x + s; pz = z; tx = 1; tz = 0; nx = 0; nz = 1; }
-  else if ((s -= w) < h) { px = x + w; pz = z + s; tx = 0; tz = 1; nx = -1; nz = 0; }
-  else if ((s -= h) < w) { px = x + w - s; pz = z + h; tx = -1; tz = 0; nx = 0; nz = -1; }
-  else { s -= w; px = x; pz = z + h - s; tx = 0; tz = -1; nx = 1; nz = 0; }
-  return [px + nx * lateral, pz + nz * lateral, tx, tz];
+  const x = r.x + lateral, z = r.y + lateral, w = Math.max(0.01, r.w - 2 * lateral), h = Math.max(0.01, r.h - 2 * lateral);
+  if (s < r.w) return [x + (s / r.w) * w, z, 1, 0];
+  if ((s -= r.w) < r.h) return [x + w, z + (s / r.h) * h, 0, 1];
+  if ((s -= r.h) < r.w) return [x + w - (s / r.w) * w, z + h, -1, 0];
+  s -= r.w;
+  return [x, z + h - (s / r.h) * h, 0, -1];
 }
 const roads = districts.filter((d) => d.depth === 1 || d.depth === 2).map((d) => ({
   x: d.x, y: d.y, w: d.w, h: d.h, len: 2 * (d.w + d.h), lvl: topY(d.depth - 1), main: d.depth === 1,
 }));
-// 보행로: 2단 이상 구역은 바깥 골목, 최상위 폴더 구역은 큰길 쪽 안쪽 가장자리, 도시 전체는 외곽 둘레
-// (중첩 폴더 둘레에만 깔면 깊은 폴더로 사람이 몰린다)
+// 보행로: 최상위 폴더 구역은 큰길가 보도, 2단 구역은 골목 안쪽 블록 보도, 3단 이상은 그 바깥 둘레, 도시 전체는 외곽 둘레
+// (중첩 폴더 둘레에만 깔면 깊은 폴더로 사람이 몰린다). 차선과 겹치지 않는다
 const walks = districts.filter((d) => d.vis.w > 1.5 && d.vis.h > 1.5).map((d) => {
-  const o = d.depth >= 2 ? 0.3 : d.depth === 1 ? -0.3 : -0.8; // 구역 테두리에서 바깥(+) / 안쪽(-)으로
+  const o = d.depth >= 3 ? 0.3 : d.depth >= 1 ? -0.3 : -0.8; // 구역 보도 테두리에서 바깥(+) / 안쪽(-)으로
   const w = d.vis.w + 2 * o, h = d.vis.h + 2 * o;
   return { x: d.vis.x - o, y: d.vis.y - o, w, h, len: 2 * (w + h), lvl: d.depth >= 2 ? topY(d.depth - 1) : topY(d.depth), wt: d.depth ? 1 : 0.35 };
 });
 
 // 차선
 const dashes = [];
-for (const r of roads.filter((r) => r.main)) for (let s = 0.5; s < r.len; s += 2.4) dashes.push([r, s]);
+// 골목 점선은 모퉁이(차선이 꺾이는 곳)를 비운다
+const nearCorner = (r, s, m) => [0, r.w, r.w + r.h, 2 * r.w + r.h, r.len].some((c) => Math.abs(s - c) < m);
+for (const r of roads) for (let s = 0.5; s < r.len; s += r.main ? 2.4 : 1.6) if (r.main || !nearCorner(r, s, ALLEY_W)) dashes.push([r, s, r.main ? 0 : ALLEY_W / 2]);
 const dashMesh = inst(box, new THREE.MeshBasicMaterial({ color: '#e9e4d0' }), dashes.length, { cast: false, receive: false });
-dashes.forEach(([r, s], k) => {
-  const [x, z, tx] = onRing(r, s, 0);
-  put(dashMesh, k, x, r.lvl + 0.003, z, tx ? 1.1 : 0.12, 0.01, tx ? 0.12 : 1.1);
+dashes.forEach(([r, s, lat], k) => {
+  const [x, z, tx] = onRing(r, s, lat), L = r.main ? 1.1 : 0.7;
+  put(dashMesh, k, x, r.lvl + (r.main ? 0.003 : 0.008), z, tx ? L : 0.1, 0.01, tx ? 0.1 : L);
 });
 
 // 가로등
@@ -987,8 +998,8 @@ junctions.forEach((j, k) => {
   }
 });
 // 교차로 안으로 이어지는 차선 점선은 지운다
-dashes.forEach(([r, s], k) => {
-  const [x, z] = onRing(r, s, 0);
+dashes.forEach(([r, s, lat], k) => {
+  const [x, z] = onRing(r, s, lat);
   if (junctions.some((j) => Math.abs(j.x - x) < 2.6 && Math.abs(j.z - z) < 2.6)) dashMesh.setMatrixAt(k, ZERO);
 });
 dashMesh.instanceMatrix.needsUpdate = true;
@@ -1577,7 +1588,7 @@ function weightedPick(list, r) {
 const mr = rng(42 + files.length);
 const cars = roads.length ? Array.from({ length: maxCars }, () => {
   const ring = weightedPick(roads, mr()), dir = mr() < 0.5 ? 1 : -1;
-  return { ring, s: mr() * ring.len, dir, speed: (ring.main ? 2.6 : 1.7) + mr() * 1.3, lane: (ring.main ? 0.62 : 0.36) * dir };
+  return { ring, s: mr() * ring.len, dir, speed: (ring.main ? 2.6 : 1.7) + mr() * 1.3, lane: laneOf(ring, dir) };
 }) : [];
 const people = walks.length ? Array.from({ length: maxPeople }, () => {
   const ring = weightedPick(walks, mr());
@@ -1936,7 +1947,9 @@ function driveCar(c, dt, time) {
     if (obstacles.length && obstacles.some(([ox, oz]) => Math.hypot(ox - ax, oz - az) < 0.75)) { want = Math.min(want, Math.max(0, (d - 1.3) * 1.8)); break; }
   }
   c.v += clamp(want - c.v, -10 * dt, 3 * dt);
-  c.s = (c.s + c.v * c.dir * dt + r.len) % r.len;
+  // 안쪽 차선은 고리보다 짧으니 그만큼 s 를 빨리 넘겨 실제 속도를 맞춘다
+  c.sk ??= r.len / Math.max(1, r.len - 8 * c.lane);
+  c.s = (c.s + c.v * c.dir * dt * c.sk + r.len) % r.len;
   c.active = true;
 }
 
