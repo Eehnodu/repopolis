@@ -721,6 +721,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// 셰이더를 처음 쓸 때마다 오류 로그를 읽느라(그래픽 드라이버가 컴파일을 끝낼 때까지 기다린다) 걷기 시작 · 건물 고르기에서 멈칫했다. #debug 에서만 검사
+renderer.debug.checkShaderErrors = /[#&]debug\b/.test(location.hash);
 $('#stage').appendChild(renderer.domElement);
 $('#boot').remove();
 
@@ -744,7 +746,7 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0,
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 // #debug 로 열면 성능 점검용으로 렌더러를 꺼내 볼 수 있다
-if (/[#&]debug\b/.test(location.hash)) window.__rp = { renderer, composer, bloom, get scene() { return scene; }, get camera() { return camera; }, get inScene() { return inScene; }, get sun() { return sun; }, get busy() { return busy; }, get mode() { return mode; }, get near() { return walk.near?.p || walk.near?.name || !!walk.near; }, get ready() { return walk.ready; } };
+if (/[#&]debug\b/.test(location.hash)) window.__rp = { renderer, composer, bloom, get scene() { return scene; }, get camera() { return camera; }, get inScene() { return inScene; }, get sun() { return sun; }, get busy() { return busy; }, get mode() { return mode; }, get near() { return walk.near?.p || walk.near?.name || !!walk.near; }, get ready() { return walk.ready; }, get walk() { return walk; }, get props() { return props; } };
 
 const hemi = new THREE.HemisphereLight('#ffffff', '#6d7a5a', 1.2);
 scene.add(hemi);
@@ -2843,7 +2845,9 @@ function pick() {
 const R_AVATAR = 0.28;
 // yaw: 카메라가 캐릭터 뒤 어느 쪽에 있는지 / heading: 캐릭터가 바라보는 방향 — 카메라는 heading 을 따라 등 뒤로 돈다
 const walk = { pos: new THREE.Vector3(), jy: 0, vy: 0, yaw: 0, pitch: 0.32, look: 0.08, dist: 4.2, scale: SCALE_CITY, v: 0, heading: 0, swing: 0, phase: 0, back: 1,
-  fp: store.get('cc-view') === 'fp', keys: new Set(), near: null, drag: null, ready: false };
+  fp: store.get('cc-view') === 'fp', keys: new Set(), near: null, drag: null, ready: false,
+  // 발밑 높이 · 자리가 한 번에 바뀔 때(공중에서 받침 위로, 턱에서 떨어질 때, 앉기 · 일어서기) 카메라가 그만큼 뒤처졌다 따라오게 — 화면이 뚝 끊기지 않게
+  lag: new THREE.Vector3(), turnLag: 0 };
 const EYE_H = BODY.headY - 0.01;
 // 주인공: 초록 곰귀 후드 (외곽선 없이 발밑 고리로 구분)
 const avatar = (() => {
@@ -2896,11 +2900,11 @@ const eyePos = () => walk.pos.clone().setY(walk.pos.y + (walk.jy || 0) + (walk.s
 // 지금 시점(1인칭 / 3인칭)에서 카메라가 있어야 할 곳과 바라볼 점
 function walkCamDesired() {
   if (walk.fp) {
-    const eye = eyePos(), cl = Math.cos(walk.look);
+    const eye = eyePos().add(walk.lag), cl = Math.cos(walk.look);
     const look = eye.clone().add(new THREE.Vector3(Math.sin(walk.heading) * cl, -Math.sin(walk.look), Math.cos(walk.heading) * cl));
     return { pos: eye, look };
   }
-  const head = headPos(), full = walk.dist * walk.scale;
+  const head = headPos().add(walk.lag), full = walk.dist * walk.scale;
   const dirAt = (p) => new THREE.Vector3(Math.sin(walk.yaw) * Math.cos(p), Math.sin(p), Math.cos(walk.yaw) * Math.cos(p));
   // 건물 안(천장 없음): 비스듬히 내려다보는 시점으로 고정 — 카메라 쪽 벽은 updateInterior 가 낮게 잘라 준다(심즈식)
   if (world === INSIDE) {
@@ -2946,7 +2950,7 @@ async function startWalkNow() {
   tip.hidden = true;
   const [x, z] = spawnPoint(controls.target);
   walk.pos.set(x, groundAt(x, z), z);
-  walk.jy = walk.vy = 0;
+  walk.jy = walk.vy = 0; walk.lag.set(0, 0, 0); walk.turnLag = 0;
   walk.sit = null; walk.sitT = 0; renderSitBtn();
   walk.knock = 0; walk.tumble = 0; walk.kx = walk.kz = 0;
   walk.yaw = Math.atan2(camera.position.x - x, camera.position.z - z);
@@ -3058,8 +3062,10 @@ function updateWalk(dt, time) {
   walk.swing += (stepping - walk.swing) * Math.min(1, dt * 8);
   // 발밑: 바닥과, 발보다 낮은 받침(벤치 · 상자 …) 중 높은 쪽. 공중에선 절대 높이를 지키고, 받침 끝을 벗어나면 떨어진다
   const under = Math.max(world.groundAt(walk.pos.x, walk.pos.z), world.topAt(walk.pos.x, walk.pos.z, reach, R_AVATAR * H * 0.9));
-  if (walk.jy > 0 || walk.vy) { const abs = walk.pos.y + walk.jy; walk.pos.y = under; walk.jy = abs - under; }
-  else if (under < walk.pos.y - 0.05 * H) { walk.jy = walk.pos.y - under; walk.pos.y = under; }
+  walk.lag.multiplyScalar(Math.exp(-dt * 9));
+  walk.turnLag *= Math.exp(-dt * 10);
+  if (walk.jy > 0 || walk.vy) { const abs = walk.pos.y + walk.jy; walk.lag.y += walk.pos.y - under; walk.pos.y = under; walk.jy = abs - under; }
+  else if (under < walk.pos.y - 0.05 * H) { walk.jy = walk.pos.y - under; walk.lag.y += walk.jy; walk.pos.y = under; }
   else walk.pos.y += (under - walk.pos.y) * Math.min(1, dt * 14);
   // 점프(Space): 키의 0.7배쯤 뛰어오른다. 공중에서도 가던 방향 · 속도 그대로, 착지하면 찌그러졌다 돌아온다
   if (walk.jumpQ && walk.ready && !walk.jy && !walk.vy) { walk.vy = 4.8 * H; sfx.jump(); }
@@ -3077,7 +3083,7 @@ function updateWalk(dt, time) {
 
   avatar.position.copy(walk.pos);
   avatar.position.y += walk.jy;
-  avatar.rotation.y = walk.heading;
+  avatar.rotation.y = walk.heading + walk.turnLag;
   avatar.scale.setScalar(H);
   // 손발이 떠 있는 걸음 + 속도만큼 앞으로 기울고(돌 땐 안쪽으로), 발이 닿을 때 살짝 찌그러지고, 서 있으면 숨 쉰다
   const ud = avatar.userData, body = ud.body, sw = walk.swing;
@@ -3232,7 +3238,7 @@ function sitDown() {
   walk.sit = best ? { kind: 'seat', ...best } : { kind: 'ground' };
   walk.lastSit = walk.sit;
   walk.v = 0;
-  if (best) { walk.heading = best.heading; walk.pos.x = best.x; walk.pos.z = best.z; }
+  if (best) { walk.turnLag = Math.atan2(Math.sin(walk.heading - best.heading), Math.cos(walk.heading - best.heading)); walk.heading = best.heading; walk.lag.x += walk.pos.x - best.x; walk.lag.z += walk.pos.z - best.z; walk.pos.x = best.x; walk.pos.z = best.z; }
   sfx.pop();
   renderSitBtn();
 }
@@ -3244,6 +3250,8 @@ function standUp() {
   if (st.kind === 'seat') {
     walk.pos.x += Math.sin(st.heading) * st.off;
     walk.pos.z += Math.cos(st.heading) * st.off;
+    walk.lag.x -= Math.sin(st.heading) * st.off;
+    walk.lag.z -= Math.cos(st.heading) * st.off;
   }
   renderSitBtn();
 }
@@ -3911,7 +3919,7 @@ async function travelToNow(fl, via) {
 }
 function placeAvatarInside(x, z, heading) {
   walk.pos.set(x, 0, z);
-  walk.jy = walk.vy = 0;
+  walk.jy = walk.vy = 0; walk.lag.set(0, 0, 0); walk.turnLag = 0;
   walk.sit = null; walk.sitT = 0; renderSitBtn();
   walk.knock = 0; walk.tumble = 0; walk.kx = walk.kz = 0;
   walk.heading = heading;
@@ -4735,8 +4743,22 @@ const clock = new THREE.Clock();
 let miniLast = 0;
 // 셰이더 미리 만들기: 처음 보는 물체를 그릴 때 그 자리에서 컴파일하느라 0.1~0.4초 멈추던 것.
 // 도시는 시작할 때, 건물 안은 들어가거나 층을 바꿀 때(화면이 검은 동안) 한다
+// 처음엔 숨겨 둔 것(주인공 · 선택 표시 …)도 함께, 밤 효과를 거쳐 그릴 때 쓰는 판(렌더 타깃)용도 함께 — 걷기 시작 · 밤에 처음 걸을 때 멈칫하던 것
 async function warm(sc) {
-  try { await renderer.compileAsync(sc, camera); } catch {}
+  const hidden = [];
+  sc.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+  const jobs = [];
+  try {
+    jobs.push(renderer.compileAsync(sc, camera)); // 어떤 셰이더를 만들지는 부르는 즉시 정해진다 — 그 뒤엔 다시 숨겨도 된다
+    if (sc === scene && !MINI) {
+      const rt = renderer.getRenderTarget();
+      renderer.setRenderTarget(composer.readBuffer);
+      jobs.push(renderer.compileAsync(sc, camera));
+      renderer.setRenderTarget(rt);
+    }
+  } catch {}
+  for (const o of hidden) o.visible = false;
+  try { await Promise.all(jobs); } catch {}
 }
 warm(scene).then(() => { if (!MINI) composer.render(); }); // 밤 효과(블룸)도 한 번 그려 둔다
 renderer.setAnimationLoop(() => {
