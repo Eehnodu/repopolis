@@ -55,6 +55,11 @@
       "icon": "build/icon.png",
       "identity": null,
       "category": "public.app-category.developer-tools"
-    }
+    },
+    "electronLanguages": [
+      "ko",
+      "en-US"
+    ],
+    "compression": "maximum"
   }
 }

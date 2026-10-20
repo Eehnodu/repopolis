@@ -743,6 +743,8 @@ composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0, 0.35, 0.86);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+// #debug 로 열면 성능 점검용으로 렌더러를 꺼내 볼 수 있다
+if (/[#&]debug\b/.test(location.hash)) window.__rp = { renderer, composer, bloom, get scene() { return scene; }, get camera() { return camera; }, get inScene() { return inScene; }, get sun() { return sun; }, get busy() { return busy; }, get mode() { return mode; }, get near() { return walk.near?.p || walk.near?.name || !!walk.near; }, get ready() { return walk.ready; } };
 
 const hemi = new THREE.HemisphereLight('#ffffff', '#6d7a5a', 1.2);
 scene.add(hemi);
@@ -1699,8 +1701,9 @@ const carMat = new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0.15 
 const carBody = inst(taperedBox(0.94), carMat, cars.length);
 const carCab = inst(taperedBox(0.8), new THREE.MeshStandardMaterial({ color: '#cfe0f0', roughness: 0.15, metalness: 0.3 }), cars.length);
 const carRoof = inst(box, carMat, cars.length);
-const carWheel = inst(new THREE.CylinderGeometry(0.5, 0.5, 1, 12).rotateZ(Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#26272b', roughness: 0.9 }), cars.length * 4);
-const carBumper = inst(box, new THREE.MeshStandardMaterial({ color: '#b9bec6', roughness: 0.5, metalness: 0.3 }), cars.length * 2);
+// 바퀴 · 범퍼는 차체 그림자에 가려 티가 안 나므로 그림자 계산에서 뺀다
+const carWheel = inst(new THREE.CylinderGeometry(0.5, 0.5, 1, 10).rotateZ(Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#26272b', roughness: 0.9 }), cars.length * 4, { cast: false });
+const carBumper = inst(box, new THREE.MeshStandardMaterial({ color: '#b9bec6', roughness: 0.5, metalness: 0.3 }), cars.length * 2, { cast: false });
 const headMat = new THREE.MeshBasicMaterial({ color: '#fff6d8' });
 const tailMat = new THREE.MeshBasicMaterial({ color: '#ff3b30' });
 const carHead = inst(box, headMat, cars.length * 2, { cast: false, receive: false });
@@ -1712,7 +1715,7 @@ cars.forEach((c, k) => { carBody.setColorAt(k, CAR_COLORS[k % CAR_COLORS.length]
 // 그래서 어떤 걸음에서도 이음새가 어색해지지 않는다. 후드가 얼굴을 감싸 멀리서도 또렷하고, 외곽선은 쓰지 않는다.
 // 주인공 · 행인 · 건물 안 직원이 같은 틀을 쓰고 후드 색 · 귀 모양 · 피부색만 다르다. 키 ≈ 0.9
 const BODY = { headR: 0.21, headY: 0.65, faceR: 0.17, faceZ: 0.055, handX: 0.25, handY: 0.33, footX: 0.085, seatY: 0.17 };
-const capsuleGeo = (r, total) => new THREE.CapsuleGeometry(r, total - 2 * r, 5, 12);
+const capsuleGeo = (r, total, q = 1) => new THREE.CapsuleGeometry(r, total - 2 * r, Math.max(2, Math.round(5 * q)), Math.max(6, Math.round(12 * q)));
 const latheGeo = (pts, seg) => new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
 const onSphere = (R, x, y) => Math.sqrt(Math.max(0, R * R - x * x - y * y));
 // 부위 목록: 지오메트리 + 몸 기준 자리(행렬) + 분류 + 색(숫자면 후드 색에 곱하는 밝기)
@@ -1721,37 +1724,39 @@ function part(list, cat, color, geo, x, y, z, rx = 0, ry = 0, rz = 0, tag) {
   _po.position.set(x, y, z); _po.rotation.set(rx, ry, rz); _po.updateMatrix();
   list.push({ cat, color, geo, m: _po.matrix.clone(), tag });
 }
-function hoodieParts(ear) {
+// q: 곡면 분할 배율 — 1 = 주인공 · 직원(가까이서 봄), 0.5 = 행인(멀리서 작게 보여 절반이면 충분, 삼각형 ≈ 1/4)
+function hoodieParts(ear, q = 1) {
+  const n = (v, min = 3) => Math.max(min, Math.round(v * q));
   const L = [], B = BODY, fy = B.headY, fz = B.faceZ, fR = B.faceR;
-  part(L, 'suit', 1, latheGeo([[0, 0.17], [0.13, 0.175], [0.17, 0.24], [0.17, 0.36], [0.14, 0.46], [0.08, 0.52], [0, 0.53]], 20), 0, 0, 0);
-  part(L, 'suit', 1, new THREE.SphereGeometry(B.headR, 26, 18), 0, B.headY, 0);
+  part(L, 'suit', 1, latheGeo([[0, 0.17], [0.13, 0.175], [0.17, 0.24], [0.17, 0.36], [0.14, 0.46], [0.08, 0.52], [0, 0.53]], n(20, 8)), 0, 0, 0);
+  part(L, 'suit', 1, new THREE.SphereGeometry(B.headR, n(26, 8), n(18, 6)), 0, B.headY, 0);
   // 얼굴 테두리: 후드와 얼굴이 만나는 원(z ≈ 0.166, 반지름 ≈ 0.13)을 덮는다
-  part(L, 'suit', 1, new THREE.TorusGeometry(0.13, 0.024, 10, 36), 0, B.headY - 0.008, 0.162);
-  part(L, 'face', 1, new THREE.SphereGeometry(fR, 22, 16).scale(1, 0.92, 0.95), 0, fy - 0.01, fz);
+  part(L, 'suit', 1, new THREE.TorusGeometry(0.13, 0.024, n(10, 4), n(36, 12)), 0, B.headY - 0.008, 0.162);
+  part(L, 'face', 1, new THREE.SphereGeometry(fR, n(22, 8), n(16, 6)).scale(1, 0.92, 0.95), 0, fy - 0.01, fz);
   for (const s of [-1, 1]) {
     if (ear === 'bear') {
-      part(L, 'ear', 1, new THREE.SphereGeometry(0.065, 16, 12).scale(1, 1, 0.6), s * 0.14, B.headY + 0.15, -0.02);
-      part(L, 'ear', 0.7, new THREE.SphereGeometry(0.038, 12, 8).scale(1, 1, 0.4), s * 0.14, B.headY + 0.15, 0.012);
+      part(L, 'ear', 1, new THREE.SphereGeometry(0.065, n(16, 6), n(12, 4)).scale(1, 1, 0.6), s * 0.14, B.headY + 0.15, -0.02);
+      part(L, 'ear', 0.7, new THREE.SphereGeometry(0.038, n(12, 6), n(8, 4)).scale(1, 1, 0.4), s * 0.14, B.headY + 0.15, 0.012);
     } else if (ear === 'cat') {
-      part(L, 'ear', 1, new THREE.ConeGeometry(0.066, 0.12, 14), s * 0.12, B.headY + 0.2, -0.01, 0, 0, -s * 0.3);
-      part(L, 'ear', 0.7, new THREE.ConeGeometry(0.036, 0.075, 10).scale(1, 1, 0.35), s * 0.115, B.headY + 0.19, 0.04, 0, 0, -s * 0.3);
+      part(L, 'ear', 1, new THREE.ConeGeometry(0.066, 0.12, n(14, 6)), s * 0.12, B.headY + 0.2, -0.01, 0, 0, -s * 0.3);
+      part(L, 'ear', 0.7, new THREE.ConeGeometry(0.036, 0.075, n(10, 5)).scale(1, 1, 0.35), s * 0.115, B.headY + 0.19, 0.04, 0, 0, -s * 0.3);
     } else if (ear === 'bunny') {
-      part(L, 'ear', 1, capsuleGeo(0.04, 0.22), s * 0.075, B.headY + 0.27, -0.03, -0.15, 0, -s * 0.18);
-      part(L, 'ear', 0.7, capsuleGeo(0.022, 0.15).scale(1, 1, 0.4), s * 0.077, B.headY + 0.27, 0.004, -0.15, 0, -s * 0.18);
+      part(L, 'ear', 1, capsuleGeo(0.04, 0.22, q), s * 0.075, B.headY + 0.27, -0.03, -0.15, 0, -s * 0.18);
+      part(L, 'ear', 0.7, capsuleGeo(0.022, 0.15, q).scale(1, 1, 0.4), s * 0.077, B.headY + 0.27, 0.004, -0.15, 0, -s * 0.18);
     }
     // 눈: 흰자 없이 세로로 긴 남색 + 큰 · 작은 하이라이트. 얼굴 중심보다 조금 아래
     const ex = s * 0.062, ey = -0.02, ez = onSphere(fR, ex, ey) - 0.006, r = 0.028;
     _po.position.set(ex, fy + ey, fz + ez); _po.rotation.set(-Math.asin(ey / fR), Math.asin(ex / fR), 0); _po.updateMatrix();
     const em = _po.matrix.clone();
-    L.push({ cat: 'detail', color: '#2b2340', geo: new THREE.SphereGeometry(r, 14, 10).scale(0.85, 1.25, 0.4), m: em, tag: 'eye' });
-    L.push({ cat: 'detail', color: '#ffffff', geo: new THREE.SphereGeometry(r * 0.3, 8, 6), m: em.clone().multiply(new THREE.Matrix4().makeTranslation(r * 0.25, r * 0.45, r * 0.32)), tag: 'shine' });
-    L.push({ cat: 'detail', color: '#ffffff', geo: new THREE.SphereGeometry(r * 0.14, 6, 5), m: em.clone().multiply(new THREE.Matrix4().makeTranslation(-r * 0.25, -r * 0.5, r * 0.3)), tag: 'shine' });
+    L.push({ cat: 'detail', color: '#2b2340', geo: new THREE.SphereGeometry(r, n(14, 6), n(10, 4)).scale(0.85, 1.25, 0.4), m: em, tag: 'eye' });
+    L.push({ cat: 'detail', color: '#ffffff', geo: new THREE.SphereGeometry(r * 0.3, n(8, 4), n(6, 3)), m: em.clone().multiply(new THREE.Matrix4().makeTranslation(r * 0.25, r * 0.45, r * 0.32)), tag: 'shine' });
+    L.push({ cat: 'detail', color: '#ffffff', geo: new THREE.SphereGeometry(r * 0.14, n(6, 4), n(5, 3)), m: em.clone().multiply(new THREE.Matrix4().makeTranslation(-r * 0.25, -r * 0.5, r * 0.3)), tag: 'shine' });
     const bx = s * 0.105, by = -0.06;
-    part(L, 'detail', '#f5a9a4', new THREE.SphereGeometry(0.032, 12, 8).scale(1, 0.55, 0.22), bx, fy + by, fz + onSphere(fR, bx, by) - 0.004, 0, Math.asin(bx / fR), 0);
+    part(L, 'detail', '#f5a9a4', new THREE.SphereGeometry(0.032, n(12, 6), n(8, 4)).scale(1, 0.55, 0.22), bx, fy + by, fz + onSphere(fR, bx, by) - 0.004, 0, Math.asin(bx / fR), 0);
   }
-  if (ear === 'pom') part(L, 'ear', 0.85, new THREE.SphereGeometry(0.055, 14, 10), 0, B.headY + 0.22, -0.03);
+  if (ear === 'pom') part(L, 'ear', 0.85, new THREE.SphereGeometry(0.055, n(14, 6), n(10, 4)), 0, B.headY + 0.22, -0.03);
   const my = -0.075, mw = 0.016;
-  part(L, 'detail', '#7a3a3a', new THREE.TorusGeometry(mw, mw * 0.22, 6, 12, Math.PI).rotateZ(Math.PI), 0, fy + my + mw * 0.4, fz + onSphere(fR, 0, my) - 0.002, -Math.asin(my / fR));
+  part(L, 'detail', '#7a3a3a', new THREE.TorusGeometry(mw, mw * 0.22, n(6, 3), n(12, 6), Math.PI).rotateZ(Math.PI), 0, fy + my + mw * 0.4, fz + onSphere(fR, 0, my) - 0.002, -Math.asin(my / fR));
   return L;
 }
 // 부위들을 한 지오메트리로 굽는다 (위치 · 법선 · 색). 색이 숫자면 회색 밝기 → 인스턴스 색(후드 색)과 곱해진다
@@ -1787,6 +1792,16 @@ const BODY_GEO = {
   // 발: 바닥이 평평한 반쪽 타원 (발바닥이 y=0)
   foot: new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.072, 0.055, 0.1),
   ...Object.fromEntries(EAR_KINDS.map((e) => ['ear_' + e, bakeParts(of(PARTS[e], 'ear'))])),
+};
+// 행인용 (곡면 절반) — 하늘에서 수백 명이 보일 때 삼각형이 가장 많이 들던 곳
+const PARTS_LO = Object.fromEntries(EAR_KINDS.map((e) => [e, hoodieParts(e, 0.5)]));
+const BODY_GEO_LO = {
+  suit: bakeParts(of(PARTS_LO.bear, 'suit')),
+  face: bakeParts(of(PARTS_LO.bear, 'face')),
+  detail: bakeParts(of(PARTS_LO.bear, 'detail')),
+  hand: new THREE.SphereGeometry(0.05, 8, 6),
+  foot: new THREE.SphereGeometry(1, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.072, 0.055, 0.1),
+  ...Object.fromEntries(EAR_KINDS.map((e) => ['ear_' + e, bakeParts(of(PARTS_LO[e], 'ear'))])),
 };
 // 밤에는 자기 색으로 살짝 빛나 어둠에 묻히지 않는다
 // lift: 낮에도 자기 색으로 조금 밝힌다 (후드 그늘 속 얼굴이 어두워지지 않게)
@@ -1830,22 +1845,32 @@ function gait(ph, a, idle = 0) {
 const eyeMat = new THREE.MeshBasicMaterial({ color: '#1e2236' });
 const detailMat = new THREE.MeshBasicMaterial({ vertexColors: true });
 const suitMat = soft(), earMat = soft({ vertexColors: true }), skinMat = soft({ roughness: 0.55, lift: 0.42 }), shoeMat = soft();
-const pp = {
-  suit: inst(BODY_GEO.suit, suitMat, people.length),
-  face: inst(BODY_GEO.face, skinMat, people.length),
-  detail: inst(BODY_GEO.detail, detailMat, people.length, { cast: false, receive: false }),
-  hand: inst(BODY_GEO.hand, skinMat, people.length * 2),
-  foot: inst(BODY_GEO.foot, shoeMat, people.length * 2),
-  ...Object.fromEntries(EAR_KINDS.map((e) => ['ear_' + e, inst(BODY_GEO['ear_' + e], earMat, people.length)])),
-};
+// 행인은 실제 그림자를 드리우지 않고 발밑 동그란 그림자로 대신한다 — 그림자 계산의 절반 넘게가 행인이었다
+const crowd = { cast: false };
+// 귀는 종류마다 그 귀를 가진 사람 수만큼만 (예전엔 4종 × 전원, 안 쓰는 3벌도 GPU 를 거쳤다)
+const earCount = Object.fromEntries(EAR_KINDS.map((e) => [e, 0]));
 people.forEach((p, k) => {
   const r = rng(k * 977 + 13);
   p.size = (0.86 + r() * 0.2) * SCALE_CITY;
   p.ear = EAR_KINDS[Math.floor(r() * EAR_KINDS.length)];
-  const hood = HOODS[k % HOODS.length], skin = SKIN[Math.floor(r() * SKIN.length)], shoe = SHOES[Math.floor(r() * SHOES.length)];
+  p.earSlot = earCount[p.ear]++;
+  p.colors = [HOODS[k % HOODS.length], SKIN[Math.floor(r() * SKIN.length)], SHOES[Math.floor(r() * SHOES.length)]];
+});
+const blobMat = new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.2, depthWrite: false });
+const pp = {
+  suit: inst(BODY_GEO_LO.suit, suitMat, people.length, crowd),
+  face: inst(BODY_GEO_LO.face, skinMat, people.length, crowd),
+  detail: inst(BODY_GEO_LO.detail, detailMat, people.length, { cast: false, receive: false }),
+  hand: inst(BODY_GEO_LO.hand, skinMat, people.length * 2, crowd),
+  foot: inst(BODY_GEO_LO.foot, shoeMat, people.length * 2, crowd),
+  blob: inst(new THREE.CircleGeometry(0.2, 12).rotateX(-Math.PI / 2), blobMat, people.length, { cast: false, receive: false }),
+  ...Object.fromEntries(EAR_KINDS.map((e) => ['ear_' + e, inst(BODY_GEO_LO['ear_' + e], earMat, earCount[e], crowd)])),
+};
+people.forEach((p, k) => {
+  const [hood, skin, shoe] = p.colors;
   pp.suit.setColorAt(k, hood);
   pp.face.setColorAt(k, skin);
-  for (const e of EAR_KINDS) { pp['ear_' + e].setColorAt(k, hood); pp['ear_' + e].setMatrixAt(k, ZERO); }
+  pp['ear_' + p.ear].setColorAt(p.earSlot, hood);
   for (const s of [0, 1]) { pp.hand.setColorAt(k * 2 + s, skin); pp.foot.setColorAt(k * 2 + s, shoe); }
 });
 const pBase = new THREE.Matrix4(), pGround = new THREE.Matrix4(), pLocal = new THREE.Matrix4(), pOut = new THREE.Matrix4();
@@ -1862,7 +1887,8 @@ function putAt(mesh, idx, base, x, y, z, rx = 0) {
   mesh.setMatrixAt(idx, pOut.multiplyMatrices(base, pLocal));
 }
 function hidePerson(k) {
-  for (const m of [pp.suit, pp.face, pp.detail, pp['ear_' + people[k].ear]]) m.setMatrixAt(k, ZERO);
+  for (const m of [pp.suit, pp.face, pp.detail, pp.blob]) m.setMatrixAt(k, ZERO);
+  pp['ear_' + people[k].ear].setMatrixAt(people[k].earSlot, ZERO);
   for (const m of [pp.hand, pp.foot]) { m.setMatrixAt(k * 2, ZERO); m.setMatrixAt(k * 2 + 1, ZERO); }
 }
 // step: 걸음 위상. a: 걸음 크기 (서 있으면 0)
@@ -1871,7 +1897,9 @@ function posePerson(k, x, y, z, yaw, size, step, a) {
   pScale.setScalar(size);
   pGround.compose(pPos.set(x, y, z), pQuat.setFromEuler(pBodyEuler.set(0, yaw, 0)), pScale);
   pBase.compose(pPos.set(x, y + G.y * size, z), pQuat.setFromEuler(pBodyEuler.set(0, yaw + G.twist, G.roll)), pScale);
-  for (const m of [pp.suit, pp.face, pp.detail, pp['ear_' + people[k].ear]]) m.setMatrixAt(k, pBase);
+  for (const m of [pp.suit, pp.face, pp.detail]) m.setMatrixAt(k, pBase);
+  pp['ear_' + people[k].ear].setMatrixAt(people[k].earSlot, pBase);
+  pp.blob.setMatrixAt(k, pOut.copy(pGround).setPosition(x, y + 0.012, z)); // 발밑 그림자 (몸이 떠도 바닥에)
   for (let s = 0; s < 2; s++) {
     const f = G.feet[s], h = G.hands[s];
     putAt(pp.foot, k * 2 + s, pGround, f[0], f[1], f[2], f[3]);
@@ -2684,8 +2712,11 @@ function tweenCamera(toPos, toTgt, dur, { cancellable = false } = {}) {
   return new Promise((resolve) => {
     if (tween) tween.resolve();
     if (mode === 'orbit' && controls.enabled) { controls.enableDamping = false; controls.update(); controls.enableDamping = true; } // 남은 관성 제거
-    tween = { fromPos: camera.position.clone(), fromTgt: camTarget.clone(), toPos: toPos.clone(), toTgt: toTgt.clone(), t: 0, dur, cancellable, resolve };
+    const t = tween = { fromPos: camera.position.clone(), fromTgt: camTarget.clone(), toPos: toPos.clone(), toTgt: toTgt.clone(), t: 0, dur, cancellable, resolve };
     controls.enabled = cancellable && mode === 'orbit';
+    // 안전장치: 창이 가려지거나 트레이로 내려가 화면 그리기가 멈추면 이동이 끝나지 않아
+    // 화면 전환 잠금이 풀리지 않던 것 — 시간이 지나면 프레임과 상관없이 끝낸다
+    setTimeout(() => { if (tween === t) { t.t = 1; stepTween(0); } }, dur * 1000 + 400);
   });
 }
 function stepTween(dt) {
@@ -3870,6 +3901,7 @@ async function travelToNow(fl, via) {
   walk.keys.clear();
   await fade(1);
   buildFloor(fl);
+  await warm(inScene); // 화면이 검은 동안 새 층의 셰이더를 미리 — 밝아지며 끊기지 않게
   const D = FL.D, W = FL.W;
   const at = via === 'elev' ? [-W / 2 + 1.7, -D / 2 + 2.4] : via === 'up' ? [W / 2 - 3.6, -D / 2 + 3.0] : via === 'down' ? [W / 2 - 1.7, -D / 2 + 3.1] : [0, D / 2 - 1.2];
   placeAvatarInside(at[0], at[1], via === 'door' ? Math.PI : 0);
@@ -3962,6 +3994,7 @@ async function enterBuildingNow(f) {
   walk.scale = SCALE_IN;
   walk.v = 0;
   await showInside(f);
+  await warm(inScene);
   await fade(0);
   walk.ready = true;
 }
@@ -4700,6 +4733,12 @@ scene.add(selBox, pin);
 
 const clock = new THREE.Clock();
 let miniLast = 0;
+// 셰이더 미리 만들기: 처음 보는 물체를 그릴 때 그 자리에서 컴파일하느라 0.1~0.4초 멈추던 것.
+// 도시는 시작할 때, 건물 안은 들어가거나 층을 바꿀 때(화면이 검은 동안) 한다
+async function warm(sc) {
+  try { await renderer.compileAsync(sc, camera); } catch {}
+}
+warm(scene).then(() => { if (!MINI) composer.render(); }); // 밤 효과(블룸)도 한 번 그려 둔다
 renderer.setAnimationLoop(() => {
   if (MINI) { const now = performance.now(); if (now - miniLast < 32) return; miniLast = now; }
   const dt = Math.min(clock.getDelta(), 0.05);
