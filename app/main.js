@@ -7,7 +7,9 @@ const electron = require('electron');
 if (typeof electron === 'string' || !electron.app) {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  require('child_process').spawn(process.execPath, [path.join(__dirname, '..')], { env, detached: true, stdio: 'ignore' }).unref();
+  // 설치 파일로 켰다면 원래 exe 를 다시 켠다 — 임시 폴더 안 exe 를 켜고 끝내면 실행기가 그 폴더를 지워 새 앱의 파일이 사라진다
+  const exe = process.env.PORTABLE_EXECUTABLE_FILE;
+  require('child_process').spawn(exe || process.execPath, exe ? [] : [path.join(__dirname, '..')], { env, detached: true, stdio: 'ignore' }).unref();
   process.exit(0);
 }
 
@@ -64,7 +66,9 @@ function scan(root) {
   return new Promise((resolve, reject) => {
     const w = new Worker(path.join(__dirname, 'scan-worker.js'), { workerData: { root } });
     w.once('message', (m) => (m.error ? reject(new Error(m.error)) : resolve(m.data)));
-    w.once('error', reject);
+    w.once('error', (e) => reject(e.code === 'MODULE_NOT_FOUND'
+      ? new Error('앱 파일 일부가 지워졌어요. 트레이 아이콘에서 끝내기로 앱을 완전히 끈 뒤 다시 켜 주세요.')
+      : e));
   });
 }
 // scan.js 와 같은 방어 옵션 (저장소 설정이 외부 명령을 띄우지 못하게)

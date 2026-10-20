@@ -1,6 +1,6 @@
 {
   "name": "repopolis",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "코드가 사는 도시 — 프로젝트 폴더를 살아 움직이는 3D 도시로",
   "author": "Eehnodu",
   "license": "MIT",
@@ -46,7 +46,8 @@
       "icon": "build/icon.png"
     },
     "portable": {
-      "artifactName": "Repopolis-windows.exe"
+      "artifactName": "Repopolis-windows.exe",
+      "unpackDirName": true
     },
     "mac": {
       "target": [
