@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('repopolis', {
   openFile: (rel) => ipcRenderer.invoke('open-file', rel),
   revealFile: (rel) => ipcRenderer.invoke('reveal-file', rel),
   readFile: (rel) => ipcRenderer.invoke('read-file', rel),
+  fileDiff: (rel) => ipcRenderer.invoke('file-diff', rel),
   pathOf: (file) => webUtils.getPathForFile(file),
   onStatus: (cb) => ipcRenderer.on('status', (_, s) => cb(s)),
   setWindow: (cmd) => ipcRenderer.invoke('window', cmd),

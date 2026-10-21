@@ -279,6 +279,17 @@
   .fold-more { all: unset; display: inline-block; margin-left: 8px; padding: 0 7px; height: 16px; line-height: 16px; vertical-align: 1px;
     border-radius: 5px; background: rgba(110, 118, 129, .22); color: #8b949e; font: 600 10.5px var(--mono); cursor: pointer; }
   .fold-more:hover { background: rgba(255, 210, 122, .2); color: #ffd27a; }
+  /* 👷 인부에게 물으면 뜨는 바뀐 내용 (커밋 안 된 diff) */
+  .diffp { position: fixed; top: 76px; right: 16px; bottom: 80px; width: min(620px, calc(100vw - 32px)); display: none; flex-direction: column; z-index: 30;
+    border-radius: 16px; background: #0d1117; border: 1px solid rgba(255,255,255,.1); box-shadow: 0 0 0 6px #05070b, 0 30px 70px rgba(0,0,0,.55); overflow: hidden; }
+  .diffp.open { display: flex; }
+  .diffp .sum { padding: 9px 16px; font-size: 12.5px; color: #8b949e; border-bottom: 1px solid rgba(255,255,255,.07); flex: none; }
+  .diffp pre { margin: 0; flex: 1; overflow: auto; padding: 6px 0 14px; font: 12.5px/1.6 var(--mono); color: #c9d1d9; }
+  .diffp .d { display: block; padding: 0 16px; white-space: pre; min-width: max-content; }
+  .diffp .d.a { background: rgba(46,160,67,.18); color: #aff5b4; }
+  .diffp .d.r { background: rgba(248,81,73,.16); color: #ffdcd7; }
+  .diffp .d.h { color: #79c0ff; background: rgba(56,139,253,.1); margin-top: 6px; }
+  .diffp .d.n { color: #6e7681; }
   .mon-btn { all: unset; cursor: pointer; padding: 3px 9px; border-radius: 6px; color: #8b949e; font-size: 11.5px; font-weight: 600; }
   .mon-btn:hover { background: rgba(255,255,255,.07); color: #c9d1d9; }
   .mon-head .elev { margin-left: 4px; }
@@ -407,6 +418,11 @@
 </aside>
 
 <aside id="detail" class="panel" hidden></aside>
+<section class="diffp" id="diffPanel" aria-label="바뀐 내용">
+  <div class="mon-head"><span class="fn" id="diffName"></span><span class="lncount" id="diffStat"></span><span class="sp"></span><button class="mon-btn" id="diffClose" title="닫기 (Esc)">✕</button></div>
+  <div class="sum" id="diffSum"></div>
+  <pre id="diffBody"></pre>
+</section>
 
 <div id="tlpill" class="panel" hidden>
   <button class="ib" id="tlStop" title="멈추기 (Space)">■</button>
@@ -746,7 +762,7 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0,
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 // #debug 로 열면 성능 점검용으로 렌더러를 꺼내 볼 수 있다
-if (/[#&]debug\b/.test(location.hash)) window.__rp = { renderer, composer, bloom, get scene() { return scene; }, get camera() { return camera; }, get inScene() { return inScene; }, get sun() { return sun; }, get busy() { return busy; }, get mode() { return mode; }, get near() { return walk.near?.p || walk.near?.name || !!walk.near; }, get ready() { return walk.ready; }, get walk() { return walk; }, get props() { return props; }, get night() { return night; }, blocked: (x, z) => blocked(x, z), groundAt: (x, z) => groundAt(x, z), get walks() { return walks; }, get S() { return S; }, get cars() { return cars.length; }, roadRoom: () => roadRoom };
+if (/[#&]debug\b/.test(location.hash)) window.__rp = { renderer, composer, bloom, get scene() { return scene; }, get camera() { return camera; }, get inScene() { return inScene; }, get sun() { return sun; }, get busy() { return busy; }, get mode() { return mode; }, get near() { return walk.near?.p || walk.near?.name || !!walk.near; }, get ready() { return walk.ready; }, get walk() { return walk; }, get props() { return props; }, get night() { return night; }, blocked: (x, z) => blocked(x, z), groundAt: (x, z) => groundAt(x, z), get walks() { return walks; }, get S() { return S; }, get cars() { return cars.length; }, roadRoom: () => roadRoom, files, get workers() { return workers; }, travel: (n) => travelTo(n, "elev"), elevator: () => openElevator(), cheer: (p) => { cheer.todo = files.filter((f) => f.p.endsWith(p)); } };
 
 const hemi = new THREE.HemisphereLight('#ffffff', '#6d7a5a', 1.2);
 scene.add(hemi);
@@ -2368,15 +2384,28 @@ function makeCrane(f, k) {
   const mx = f.x + (f.cell.w / 2 - 0.55) * (k % 2 ? 1 : -1), mz = f.z + (f.cell.h / 2 - 0.55) * (k % 3 ? 1 : -1);
   return { f, g, mast, pivot, jib, counter, cable, load, tip, mx, mz, speed: 0.25 + (k % 5) * 0.08, phase: k };
 }
+// 준공된 건물의 크레인: 팔이 접히며 기둥이 땅으로 내려가 사라진다 (2.5초)
+const fallingCranes = [];
+function dismantleCrane(f, time) {
+  const c = makeCrane(f, fallingCranes.length + 7);
+  c.dis = time;
+  fallingCranes.push(c);
+}
 function moveCranes(time) {
-  for (const c of cranes) {
-    const h = (c.f.box ? c.f.box.h : 0) + 3.2, L = Math.max(4, (c.f.cell.w + c.f.cell.h) * 0.45);
+  for (let i = fallingCranes.length - 1; i >= 0; i--) {
+    const c = fallingCranes[i];
+    if (time - c.dis < 2.5) continue;
+    scene.remove(c.g); c.load.material.dispose(); fallingCranes.splice(i, 1);
+  }
+  for (const c of cranes.concat(fallingCranes)) {
+    const p = c.dis == null ? 0 : clamp01((time - c.dis) / 2.5), q = 1 - p * p;
+    const h = ((c.f.box ? c.f.box.h : 0) + 3.2) * q, L = Math.max(4, (c.f.cell.w + c.f.cell.h) * 0.45) * Math.max(0.05, 1 - p * 1.6);
     c.g.position.set(c.mx, c.f.baseY, c.mz);
     c.mast.scale.set(0.32, h, 0.32);
     c.pivot.position.y = h;
     c.jib.scale.set(L, 0.3, 0.3); c.jib.position.x = L / 2 - 0.4;
     c.counter.scale.set(1.2, 0.5, 0.55); c.counter.position.x = -1.2;
-    const reach = L * (0.55 + 0.25 * Math.sin(time * 0.4 + c.phase)), drop = 1.5 + (h - 2) * (0.5 + 0.4 * Math.sin(time * 0.6 + c.phase));
+    const reach = L * (0.55 + 0.25 * Math.sin(time * 0.4 + c.phase)), drop = Math.max(0.2, Math.min(h - 0.5, 1.5 + (h - 2) * (0.5 + 0.4 * Math.sin(time * 0.6 + c.phase))));
     c.cable.scale.set(0.04, drop, 0.04); c.cable.position.set(reach, -drop, 0);
     c.load.scale.set(0.7, 0.4, 0.7); c.load.position.set(reach, -drop - 0.4, 0);
     c.tip.position.set(L - 0.4, 0.3, 0);
@@ -2384,6 +2413,174 @@ function moveCranes(time) {
     c.tip.visible = Math.sin(time * 4 + c.phase) > 0;
   }
 }
+
+// 👷 공사 인부 — 커밋 안 된 변경이 있는 건물 둘레에서 일한다.
+// 인부 수 = 바뀐 줄 수(더한 + 뺀, 1~4명), 최근 3분 안에 저장했으면 망치질 · 오래 두었으면 앉아 쉬기.
+// 방금 준공(커밋)된 건물에선 몇 초 박수 치며 뛰고, 그 건물 크레인은 접혀 내려간다. 많아도 부위마다 InstancedMesh 하나
+const WK_SITES = 30, WK_MAX = WK_SITES * 4, WK_ACTIVE_S = 180, CHEER_S = 6;
+const wkMat = { helmet: soft({ color: '#f5c518', lift: 0.12 }), handle: soft({ color: '#9a6a3c' }), head: metalMat };
+const wk = {
+  suit: inst(BODY_GEO_LO.suit, suitMat, WK_MAX, crowd),
+  face: inst(BODY_GEO_LO.face, skinMat, WK_MAX, crowd),
+  detail: inst(BODY_GEO_LO.detail, detailMat, WK_MAX, { cast: false, receive: false }),
+  hand: inst(BODY_GEO_LO.hand, skinMat, WK_MAX * 2, crowd),
+  foot: inst(BODY_GEO_LO.foot, shoeMat, WK_MAX * 2, crowd),
+  blob: inst(new THREE.CircleGeometry(0.2, 12).rotateX(-Math.PI / 2), blobMat, WK_MAX, { cast: false, receive: false }),
+  helmet: inst(new THREE.SphereGeometry(0.235, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.8, 1.05), wkMat.helmet, WK_MAX, crowd),
+  handle: inst(new THREE.BoxGeometry(0.035, 0.22, 0.035).translate(0, 0.08, 0), wkMat.handle, WK_MAX, crowd),
+  head: inst(new THREE.BoxGeometry(0.13, 0.06, 0.06).translate(0, 0.19, 0), wkMat.head, WK_MAX, crowd),
+};
+const VEST = C('#ff8a1f'), BOOT = C('#4a3a2c');
+for (let k = 0; k < WK_MAX; k++) {
+  wk.suit.setColorAt(k, VEST);
+  wk.face.setColorAt(k, SKIN[k % SKIN.length]);
+  for (const s of [0, 1]) { wk.hand.setColorAt(k * 2 + s, SKIN[k % SKIN.length]); wk.foot.setColorAt(k * 2 + s, BOOT); }
+}
+const workers = [];
+let wkUsed = 0;
+// 공사 중 파일 → 인부 자리. 방금 준공된 파일(cheer)도 잠깐 같이
+const cheerSites = [];
+function rebuildWorkers() {
+  workers.length = 0;
+  const sites = files.filter((f) => f.wip).sort((a, b) => (b.wt || 0) - (a.wt || 0) || b.l - a.l).slice(0, WK_SITES);
+  const add = (f, si, n, mode) => { for (let j = 0; j < n; j++) workers.push({ f, mode, t: (j + 0.5) / n + si * 0.137, ph: si * 1.7 + j * 2.3 }); };
+  sites.forEach((f, si) => add(f, si, clamp(Math.round(1 + Math.log2(1 + ((f.wa || 0) + (f.wd || 0)) / 8)), 1, 4), 'work'));
+  cheerSites.forEach((c, si) => add(c.f, si + sites.length, 3, 'cheer'));
+  workers.forEach((w, k) => { w.k = k; });
+  for (let k = workers.length; k < Math.max(wkUsed, workers.length); k++) hideWorker(k);
+  wkUsed = workers.length;
+  wkDirty = true;
+}
+let wkDirty = true;
+function hideWorker(k) {
+  for (const m of [wk.suit, wk.face, wk.detail, wk.blob, wk.helmet, wk.handle, wk.head]) m.setMatrixAt(k, ZERO);
+  for (const m of [wk.hand, wk.foot]) { m.setMatrixAt(k * 2, ZERO); m.setMatrixAt(k * 2 + 1, ZERO); }
+}
+// 건물 둘레(사각형)의 t 지점 — 필지 안쪽으로 접어 넣는다
+function aroundBuilding(f, t) {
+  const b = f.box, hw = Math.min(b.w / 2 + 0.34, f.cell.w / 2 - 0.15), hd = Math.min(b.d / 2 + 0.34, f.cell.h / 2 - 0.15);
+  const per = 4 * (hw + hd);
+  let d = (((t % 1) + 1) % 1) * per;
+  if (d < 2 * hw) return [f.x - hw + d, f.z + hd];
+  d -= 2 * hw; if (d < 2 * hd) return [f.x + hw, f.z + hd - d];
+  d -= 2 * hd; if (d < 2 * hw) return [f.x + hw - d, f.z - hd];
+  d -= 2 * hw; return [f.x - hw, f.z - hd + d];
+}
+const wkHand = [[0, 0, 0], [0, 0, 0]], wkFoot = [[0, 0, 0, 0], [0, 0, 0, 0]];
+function moveWorkers(time) {
+  const show = state.time >= N && mode !== 'inside';
+  if (!show || !workers.length) {
+    if (wkDirty || wkUsed) { for (let k = 0; k < wkUsed; k++) hideWorker(k); for (const m of Object.values(wk)) m.instanceMatrix.needsUpdate = true; }
+    wkDirty = false;
+    if (!show) return;
+  }
+  const now = Date.now() / 1000, size = 0.92 * SCALE_CITY;
+  for (const w of workers) {
+    const f = w.f, k = w.k;
+    if (!f.box) { hideWorker(k); continue; }
+    const [x, z] = aroundBuilding(f, w.t);
+    w.x = x; w.z = z; // 걷다가 가까이 가면 말을 걸 수 있게
+    const mode = w.mode === 'cheer' ? 'cheer' : f.wt && now - f.wt < WK_ACTIVE_S ? 'hammer' : 'rest';
+    let yaw = Math.atan2(f.x - x, f.z - z), y = f.baseY, lean = 0, sitY = 0, tool = 'hand';
+    const ph = time + w.ph;
+    if (mode === 'hammer') {
+      // 망치: 오른손을 들었다 벽 쪽으로 내리친다 (몸도 같이 살짝)
+      const a = 0.5 + 0.5 * Math.sin(ph * 7);
+      lean = 0.1 + 0.08 * (1 - a);
+      wkHand[0][0] = -0.13; wkHand[0][1] = 0.36; wkHand[0][2] = 0.2;
+      wkHand[1][0] = 0.17; wkHand[1][1] = 0.36 + 0.2 * a; wkHand[1][2] = 0.12 + 0.06 * (1 - a);
+      w.swing = -1.4 + 1.6 * (1 - a);
+      for (let s = 0; s < 2; s++) { const sd = s ? 1 : -1; wkFoot[s][0] = sd * BODY.footX; wkFoot[s][1] = 0; wkFoot[s][2] = 0.01; wkFoot[s][3] = 0; }
+    } else if (mode === 'rest') {
+      // 쉬는 중: 벽에 등을 대고 바닥에 앉아 숨 고르기, 망치는 옆에
+      yaw += Math.PI; sitY = -0.15; tool = 'ground';
+      const br = Math.sin(ph * 1.6) * 0.01;
+      for (let s = 0; s < 2; s++) {
+        const sd = s ? 1 : -1;
+        wkFoot[s][0] = sd * 0.1; wkFoot[s][1] = 0.02; wkFoot[s][2] = 0.24; wkFoot[s][3] = -1.1;
+        wkHand[s][0] = sd * 0.2; wkHand[s][1] = 0.17 + br; wkHand[s][2] = 0.12;
+      }
+    } else {
+      // 준공: 망치를 내려놓고 박수 치며 콩콩
+      y += Math.max(0, Math.sin(ph * 6)) * 0.08; tool = 'ground';
+      const clap = Math.abs(Math.sin(ph * 9));
+      for (let s = 0; s < 2; s++) {
+        const sd = s ? 1 : -1;
+        wkHand[s][0] = sd * (0.04 + 0.12 * clap); wkHand[s][1] = 0.6; wkHand[s][2] = 0.12;
+        wkFoot[s][0] = sd * BODY.footX; wkFoot[s][1] = 0; wkFoot[s][2] = 0.01; wkFoot[s][3] = 0;
+      }
+    }
+    pScale.setScalar(size);
+    pGround.compose(pPos.set(x, y, z), pQuat.setFromEuler(pBodyEuler.set(0, yaw, 0)), pScale);
+    pBase.compose(pPos.set(x, y + sitY * size, z), pQuat.setFromEuler(pBodyEuler.set(lean, yaw, 0)), pScale);
+    for (const m of [wk.suit, wk.face, wk.detail]) m.setMatrixAt(k, pBase);
+    putPart(wk.helmet, k, 0, BODY.headY + 0.04, 0.0);
+    wk.blob.setMatrixAt(k, pOut.copy(pGround).setPosition(x, f.baseY + 0.012, z));
+    for (let s = 0; s < 2; s++) {
+      const fo = wkFoot[s], h = wkHand[s];
+      putAt(wk.foot, k * 2 + s, pGround, fo[0], fo[1], fo[2], fo[3]);
+      putAt(wk.hand, k * 2 + s, pBase, h[0], h[1], h[2]);
+    }
+    if (tool === 'hand') { const h = wkHand[1]; putAt(wk.handle, k, pBase, h[0], h[1] - 0.04, h[2], w.swing); putAt(wk.head, k, pBase, h[0], h[1] - 0.04, h[2], w.swing); }
+    else { pLocal.makeRotationFromEuler(pEuler.set(0, 0.4, Math.PI / 2)).setPosition(0.32, 0.03, 0.05); wk.handle.setMatrixAt(k, pOut.multiplyMatrices(pGround, pLocal)); wk.head.setMatrixAt(k, pOut.multiplyMatrices(pGround, pLocal)); }
+  }
+  for (const m of Object.values(wk)) m.instanceMatrix.needsUpdate = true;
+  wkDirty = false;
+}
+rebuildWorkers();
+// 🎉 준공 연출: 앱이 커밋을 보고 다시 지을 때 #done=경로|경로 로 방금 공사가 끝난 파일을 알려 준다.
+// 타임랩스(새 커밋만큼 자라기)가 끝나면 그 건물에서 인부들이 박수 치고 크레인이 접혀 내려간다
+const cheer = { todo: [], until: 0 };
+function tickCheer(time) {
+  if (cheer.todo.length && state.time >= N && !state.playing) {
+    for (const f of cheer.todo) { cheerSites.push({ f }); dismantleCrane(f, time); }
+    cheer.todo = [];
+    cheer.until = time + CHEER_S;
+    rebuildWorkers();
+    sfx.chime();
+  } else if (cheer.until && time > cheer.until) {
+    cheer.until = 0;
+    cheerSites.length = 0;
+    rebuildWorkers();
+  }
+}
+
+// 걷다가 인부 옆(0.8 안)에 서면 E 로 말을 건다 → 그 파일의 커밋 안 된 변경
+function nearestWorker(x, z) {
+  if (state.time < N) return null;
+  let best = null, bd = 0.8;
+  for (const w of workers) {
+    if (w.mode !== 'work' || w.x === undefined) continue;
+    const d = Math.hypot(w.x - x, w.z - z);
+    if (d < bd) { bd = d; best = w; }
+  }
+  return best && (best.ref ||= { wk: true, f: best.f });
+}
+async function openDiff(f) {
+  const age = f.wt ? Date.now() / 1000 - f.wt : Infinity;
+  $('#diffName').textContent = `👷 ${f.name}`;
+  $('#diffStat').textContent = `+${fmt(f.wa || 0)} −${fmt(f.wd || 0)}`;
+  $('#diffSum').textContent = `${age < WK_ACTIVE_S ? '🔨 지금 고치는 중' : f.wt ? `☕ ${relAgo(f.wt)} 저장하고 쉬는 중` : '☕ 쉬는 중'} · 커밋 안 된 변경 ${fmt(f.wh?.length || 0)}곳 · ${f.p}`;
+  $('#diffBody').innerHTML = '<span class="d n">불러오는 중…</span>';
+  $('#diffPanel').classList.add('open');
+  let text = null;
+  if (BRIDGE?.fileDiff) { try { text = await BRIDGE.fileDiff(f.p); } catch {} }
+  // 앱이 아니면(HTML 한 장): 원문이 들어 있으면 바뀐 줄 범위의 지금 내용만
+  const src = DATA.src?.[f.i];
+  if (text == null && src != null && f.wh?.length) {
+    const L = src.split('\n');
+    text = f.wh.map(([s, n]) => `@@ +${s},${n} @@\n${L.slice(s - 1, s - 1 + Math.min(n, 300)).map((x) => `+${x}`).join('\n')}`).join('\n');
+  }
+  if (!$('#diffPanel').classList.contains('open')) return; // 기다리는 사이 닫았다
+  if (!text) { $('#diffBody').innerHTML = '<span class="d n">바뀐 내용을 불러오지 못했어요 (앱에서 열면 보여요)</span>'; return; }
+  $('#diffBody').innerHTML = text.split('\n').slice(0, 4000).map((l) => {
+    const c = l.startsWith('@@') ? 'h' : /^(diff |index |\+\+\+ |--- |new file|deleted file|similarity|rename)/.test(l) ? 'n' : l[0] === '+' ? 'a' : l[0] === '-' ? 'r' : '';
+    return `<span class="d ${c}">${esc(l) || ' '}</span>`;
+  }).join('');
+}
+const diffOpen = () => $('#diffPanel').classList.contains('open');
+function closeDiff() { $('#diffPanel').classList.remove('open'); }
+$('#diffClose').addEventListener('click', closeDiff);
 
 // ☁️ 구름 / ✨ 별
 const cloudMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, flatShading: true, transparent: true, opacity: 0.92 });
@@ -2582,7 +2779,11 @@ function renderDetail() {
       <div class="stat"><small>커밋</small><b>${HAS_GIT ? fmt(f.ch) : '–'}</b></div>
       <div class="stat"><small>최근 90일</small><b>${HAS_GIT ? fmt(f.r90) : '–'}</b></div>
     </div>`;
-  if (f.wip) html += `<div class="kv"><span>공사 중</span><span>아직 커밋 안 된 변경이 있어요</span></div>`;
+  if (f.wip) {
+    const crew = workers.filter((w) => w.f === f && w.mode === 'work').length, busy = f.wt && Date.now() / 1000 - f.wt < WK_ACTIVE_S;
+    html += `<div class="kv"><span>공사 중</span><span>+${fmt(f.wa || 0)} −${fmt(f.wd || 0)}줄${crew ? ` · 👷 ${crew}명 ${busy ? '일하는 중' : '쉬는 중'}` : ''}</span></div>
+      <div class="btns" style="margin-top:6px"><button class="btn ghost" data-act="diff">👷 바뀐 내용 보기</button></div>`;
+  }
   // 관계: 함께 바뀌는 파일 · 쓰는 곳 · 쓰이는 곳 (누르면 그 건물로)
   const relRow = (j, color, right) => `<button class="rel" data-go="${j}"><i style="background:#${color.getHexString()}"></i><span>${esc(files[j].name)}</span><small>${right}</small></button>`;
   if (f.cp?.length) {
@@ -2623,6 +2824,7 @@ function renderDetail() {
   el.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => select(+b.dataset.go, true)));
   el.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     if (b.dataset.act === 'enter') enterBuilding(f);
+    else if (b.dataset.act === 'diff') openDiff(f);
     else BRIDGE[b.dataset.act === 'open' ? 'openFile' : 'revealFile'](f.p);
   }));
 }
@@ -3012,9 +3214,11 @@ const CITY = {
   // 발이 닿는 높이(reach)보다 높은 받침이 반경 r 안에 있으면 막힌다 / reach 보다 낮은 받침 중 가장 높은 윗면
   solid: (x, z, reach, r) => platsNear(x, z).some((p) => p[6] > reach && platCovers(p, x, z, r)),
   topAt: (x, z, reach, m) => platsNear(x, z).reduce((top, p) => (p[6] <= reach && p[6] > top && platCovers(p, x, z, m) ? p[6] : top), 0),
-  near: (x, z) => nearestBuilding(x, z),
-  prompt: (f) => `<kbd>E</kbd> ${TYPES[f.curType].icon} <b>${esc(f.name)}</b> 들어가기 <span style="color:var(--muted);font-weight:500">· ${f.box.floors}층</span>`,
-  act: (f) => enterBuilding(f),
+  near: (x, z) => nearestWorker(x, z) || nearestBuilding(x, z),
+  prompt: (n) => (n.wk
+    ? `<kbd>E</kbd> 👷 <b>${esc(n.f.name)}</b> 인부에게 묻기 <span style="color:var(--muted);font-weight:500">· 무엇이 바뀌었나</span>`
+    : `<kbd>E</kbd> ${TYPES[n.curType].icon} <b>${esc(n.name)}</b> 들어가기 <span style="color:var(--muted);font-weight:500">· ${n.box.floors}층</span>`),
+  act: (n) => (n.wk ? openDiff(n.f) : enterBuilding(n)),
 };
 let world = CITY;
 const walking = () => mode === 'walk' || mode === 'inside';
@@ -3640,6 +3844,12 @@ function introOf(text) {
 let insideFile = null, insideFrom = 'orbit', savedView = null, insideOutline = [], insideFloors = 1, insideText = null, insideHljs = null;
 const floorOfLine = (line) => clamp(Math.ceil(line / (insideFile.l / insideFloors)), 1, insideFloors);
 const floorRange = (fl) => { const lpf = insideFile.l / insideFloors; return [Math.round((fl - 1) * lpf) + 1, Math.round(fl * lpf)]; };
+// 이 층 줄 범위와 겹치는 커밋 안 된 변경(@@ 덩어리) 수
+const workOnFloor = (fl) => {
+  if (!insideFile?.wip || !insideFile.wh) return 0;
+  const [a, b] = floorRange(fl);
+  return insideFile.wh.filter(([s, n]) => s <= b && s + n - 1 >= a).length;
+};
 // 요소마다 줄 범위: 다음 요소 바로 앞까지 (클래스는 다음 최상위 요소 앞까지)
 function withRanges(outline, total) {
   return outline.map((o, k) => {
@@ -3751,6 +3961,30 @@ function buildFloor(fl) {
   const signM = new THREE.Mesh(new THREE.PlaneGeometry(4, 1), new THREE.MeshBasicMaterial({ map: sign, transparent: true }));
   signM.position.set(0, 2.0, -D / 2 + 0.17);
   FL.sides.back.add(signM);
+  // 🏗️ 이 층 줄 범위에 커밋 안 된 변경이 있으면: 세 벽에 노랑 · 검정 공사 테이프 + 층 표지판 아래 "공사 중 · N곳"
+  const work = workOnFloor(fl);
+  if (work) {
+    const stripe = canvasTex(128, 16, (g, w, h) => {
+      g.fillStyle = '#f5c518'; g.fillRect(0, 0, w, h); g.fillStyle = '#1d1d1f';
+      for (let x = -h; x < w; x += 32) { g.beginPath(); g.moveTo(x, h); g.lineTo(x + h, 0); g.lineTo(x + h + 14, 0); g.lineTo(x + 14, h); g.fill(); }
+    });
+    stripe.wrapS = THREE.RepeatWrapping;
+    const tapeMat = (len) => { const t = stripe.clone(); t.repeat.set(len / 1.4, 1); t.needsUpdate = true; return new THREE.MeshBasicMaterial({ map: t }); };
+    for (const [side, len, x, z, ry] of [['back', W - 0.4, 0, -D / 2 + 0.16, 0], ['left', D - 0.4, -W / 2 + 0.16, 0, Math.PI / 2], ['right', D - 0.4, W / 2 - 0.16, 0, -Math.PI / 2]]) {
+      const tape = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.16), tapeMat(len));
+      tape.position.set(x, 0.9, z);
+      tape.rotation.y = ry;
+      FL.sides[side].add(tape);
+    }
+    const badge = canvasTex(512, 96, (g, w, h) => {
+      g.fillStyle = '#f5c518'; g.beginPath(); g.roundRect(0, 0, w, h, 24); g.fill();
+      g.fillStyle = '#1d1d1f'; g.font = '800 52px "Pretendard Variable", Pretendard, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(`🏗️ 공사 중 · ${work}곳`, w / 2, h / 2 + 2);
+    });
+    const badgeM = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 0.375), new THREE.MeshBasicMaterial({ map: badge, transparent: true }));
+    badgeM.position.set(0, 1.35, -D / 2 + 0.18);
+    FL.sides.back.add(badgeM);
+  }
 
   // 엘리베이터 (뒷벽 왼쪽)
   const ex = -W / 2 + 1.7, ez = -D / 2 + 0.15;
@@ -3967,7 +4201,7 @@ function openElevator() {
   const counts = new Map();
   for (const o of insideOutline) counts.set(floorOfLine(o.line), (counts.get(floorOfLine(o.line)) || 0) + 1);
   $('#elevGrid').innerHTML = [...Array(insideFloors)].map((_, k) => insideFloors - k).map((fl) =>
-    `<button data-fl="${fl}" class="${fl === FL.n ? 'on' : ''}"><b>${fl}F</b><small>${counts.get(fl) ? `${counts.get(fl)}개` : '서류함'}</small></button>`).join('');
+    `<button data-fl="${fl}" class="${fl === FL.n ? 'on' : ''}"><b>${fl}F${workOnFloor(fl) ? ' 🏗️' : ''}</b><small>${counts.get(fl) ? `${counts.get(fl)}개` : '서류함'}</small></button>`).join('');
   $('#elevPanel').classList.add('open');
 }
 function closeElevator() { $('#elevPanel').classList.remove('open'); }
@@ -4340,6 +4574,7 @@ function updateInterior(dt, time) {
 const WALK_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight']);
 addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#settings').hidden) { openSettings(false); return; }
+  if (e.key === 'Escape' && diffOpen()) { closeDiff(); return; }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.repeat && (e.code === 'KeyE' || e.key === 'Escape')) return;
   if (mode === 'inside') {
@@ -4691,12 +4926,13 @@ if (BRIDGE?.getNotify) {
 function applyLive(d, msg) {
   if (d.commits.length !== N || d.files.length !== files.length || d.files.some((g, k) => g.p !== files[k].p)) return false;
   const wipBefore = files.map((f) => f.wip);
-  d.files.forEach((g, k) => Object.assign(files[k], { l: g.l, fn: g.fn, b: g.b, wip: g.wip, dep: g.dep || [] }));
+  d.files.forEach((g, k) => Object.assign(files[k], { l: g.l, fn: g.fn, b: g.b, wip: g.wip, wa: g.wa, wd: g.wd, wh: g.wh, wt: g.wt, dep: g.dep || [] }));
   usedBy.forEach((u) => (u.length = 0));
   for (const f of files) for (const j of f.dep) usedBy[j].push(f.i);
   if ('src' in d) DATA.src = d.src;
   paintLots();
   if (files.some((f, k) => !f.wip !== !wipBefore[k])) { rebuildCranes(); warm(scene); }
+  rebuildWorkers(); // 인부 수 · 일하는 중인지는 줄 수 · 저장 시각으로 바뀐다
   renderStats();
   if (state.time >= N) applyTime(); // 높이는 그리기 반복에서 새 높이까지 천천히 자란다
   if (MINI) renderMini();
@@ -4744,6 +4980,8 @@ async function restoreView() {
 
 // 주소 해시: #mode=claude&time=120&select=gamePage&play=1&live=1&sky=night
 const hash = new URLSearchParams(location.hash.slice(1));
+// done=경로|경로 — 방금 준공된 파일 (앱이 커밋을 보고 다시 지을 때)
+cheer.todo = (hash.get('done') || '').split('|').map((p) => files.find((f) => f.p === p)).filter(Boolean).slice(0, 8);
 const wantColor = hash.get('mode') || store.get('cc-mode');
 if (MODES[wantColor] && (HAS_GIT || !MODES[wantColor].git)) state.color = wantColor;
 if (HAS_GIT && hash.has('time')) state.time = Math.max(0, Math.min(N, +hash.get('time') || 0));
@@ -4857,6 +5095,8 @@ renderer.setAnimationLoop(() => {
   moveArcs(time);
   updateSignals(time);
   moveCranes(time);
+  moveWorkers(time);
+  tickCheer(time);
   for (const c of clouds) {
     c.position.x += c.userData.speed * dt;
     if (c.position.x > CLOUD_X) c.position.x = -CLOUD_X;

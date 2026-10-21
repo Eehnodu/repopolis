@@ -88,6 +88,8 @@ function isSkipped(rel, excludes, docs) {
   if (parts.slice(0, -1).some((p) => SKIP_DIRS.has(p))) return true;
   const name = parts[parts.length - 1];
   if (SKIP_NAMES.has(name) || /\.min\.\w+$/.test(name)) return true;
+  // 비밀값이 든 .env · .env.local … 은 건물로도, HTML 속 코드 원문으로도 넣지 않는다 (.env.example 같은 견본은 둔다)
+  if (/^\.env(\..+)?$/i.test(name) && !/\.(example|sample|template|dist)$/i.test(name)) return true;
   const ext = path.extname(name).toLowerCase();
   if (SKIP_EXT.has(ext) || (!docs && DOC_EXT.has(ext))) return true;
   return excludes.some((re) => re.test(rel));
@@ -344,6 +346,32 @@ function readWip(root) {
   return new Set([...wip].map((p) => (prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p)));
 }
 
+// 공사 중 파일의 자세한 정보 (공사 인부 · 바뀐 층 표시용): 커밋된 것과 비교해 더한 줄 · 뺀 줄,
+// 지금 파일에서 바뀐 줄 범위(@@ +시작,길이 @@ — 최대 40개). 새 파일 · 커밋이 아직 없으면 전부 더한 줄
+function readWipDetail(root, headExists) {
+  const out = new Map();
+  if (!headExists) return out;
+  let text = '';
+  try {
+    text = git(['diff', 'HEAD', '-U0', '--relative', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--', '.'], root);
+  } catch { return out; }
+  let cur = null;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('+++ ')) {
+      const p = line.slice(4).trim();
+      cur = p === '/dev/null' ? null : { wa: 0, wd: 0, wh: [] };
+      if (cur) out.set(p.replace(/^b\//, ''), cur);
+    } else if (cur && line.startsWith('@@')) {
+      const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (!m) continue;
+      const del = m[1] === undefined ? 1 : +m[1], start = +m[2], len = m[3] === undefined ? 1 : +m[3];
+      cur.wa += len; cur.wd += del;
+      if (cur.wh.length < 40) cur.wh.push([Math.max(1, start), Math.max(1, len)]); // 지운 것만 있는 곳(len 0)도 그 줄 근처로
+    }
+  }
+  return out;
+}
+
 function buildData(target, { exclude = [], docs = false, source = false, log = () => {} } = {}) {
   target = path.resolve(target);
   if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error(`폴더를 찾을 수 없어요: ${target}`);
@@ -365,12 +393,20 @@ function buildData(target, { exclude = [], docs = false, source = false, log = (
 
   let history = { commits: [], authors: [], coupling: new Map() };
   if (useGit) {
-    if (hasCommits(target)) {
+    const head = hasCommits(target);
+    if (head) {
       log('📜 git 기록 읽는 중...');
       history = readHistory(target, new Map(files.map((f) => [f.p, f])), now);
     } else log('📜 아직 커밋이 없어 기록 없이 진행');
-    const wip = readWip(target);
-    for (const f of files) if (wip.has(f.p)) f.wip = 1;
+    const wip = readWip(target), detail = readWipDetail(target, head);
+    for (const f of files) {
+      if (!wip.has(f.p)) continue;
+      // wa · wd = 더한 · 뺀 줄 (인부 수), wt = 마지막 저장 시각 (일하는 중 · 쉬는 중), wh = 바뀐 줄 범위 (층 표시)
+      const d = detail.get(f.p) || { wa: f.l, wd: 0, wh: [[1, Math.max(1, f.l)]] }; // diff 에 없으면 새 파일 — 전부 새로
+      let wt = 0;
+      try { wt = Math.floor(fs.statSync(path.join(target, f.p)).mtimeMs / 1000); } catch {}
+      Object.assign(f, { wip: 1, wa: d.wa, wd: d.wd, wh: d.wh, wt });
+    }
   }
   resolveDeps(files);
   const src = source ? files.map((f) => f._text) : undefined;

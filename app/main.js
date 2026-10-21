@@ -148,15 +148,28 @@ async function watch(proj) {
       });
     } catch {}
   }
-  proj.poll = setInterval(async () => {
+  const checkWip = async () => {
+    if (proj.stopped) return;
     const key = await wipKeyOf(proj.root);
     if (key !== null && key !== proj.wipKey) refresh(proj);
-  }, WIP_POLL_MS);
+  };
+  // 저장하자마자: 폴더 안 파일이 바뀌면 1.2초 뒤 한 번 확인 (몰아서 여러 번 저장해도 한 번). .git · node_modules 같은 건 무시
+  try {
+    let t;
+    proj.fileWatcher = fs.watch(proj.root, { recursive: true }, (_, name) => {
+      if (name && /(^|[\\/])(\.git|node_modules|dist|build|out|\.next|__pycache__|\.venv|venv)([\\/]|$)/.test(name)) return;
+      clearTimeout(t);
+      t = setTimeout(checkWip, 1200);
+    });
+    proj.fileWatcher.on('error', () => {}); // 폴더가 지워지는 등 — 12초 확인이 남아 있다
+  } catch {}
+  proj.poll = setInterval(checkWip, WIP_POLL_MS); // 감시가 놓친 것까지 (네트워크 드라이브 · 감시 한도)
 }
 
 function stopWatching() {
   if (!current) return;
   current.watcher?.close();
+  current.fileWatcher?.close();
   clearInterval(current.poll);
   current.stopped = true;
   current = null;
@@ -182,6 +195,10 @@ async function refresh(proj) {
       params.set('time', String(oldN));
       params.set('play', '1');
       params.set('toast', newN - oldN === 1 ? `🎉 준공! ${subject}` : `🎉 새 커밋 ${newN - oldN}개 — ${subject}`);
+      // 공사가 끝난 건물 (화면에서 인부 박수 · 크레인 철거)
+      const nowWip = new Set(data.files.filter((f) => f.wip).map((f) => f.p)), have = new Set(data.files.map((f) => f.p));
+      const done = before.files.filter((f) => f.wip && !nowWip.has(f.p) && have.has(f.p)).map((f) => f.p).slice(0, 8);
+      if (done.length) params.set('done', done.join('|'));
     } else if (wipNow !== wipBefore) {
       params.set('toast', wipNow > wipBefore ? `🏗️ 공사 시작 — 공사 중 ${wipNow}곳` : `🏗️ 공사 중 ${wipNow}곳`);
     }
@@ -257,6 +274,19 @@ handle('read-file', (_, rel) => {
   const st = fs.statSync(p, { throwIfNoEntry: false });
   if (!st || !st.isFile() || st.size > 2 * 1024 * 1024) return null;
   return fs.readFileSync(p, 'utf8');
+});
+
+// 👷 인부에게 물으면: 그 파일의 커밋 안 된 변경 (git diff). 아직 git 이 모르는 새 파일이면 전부 더한 줄로.
+// 명령을 실행하는 git 설정(filter · textconv …)이 있는 저장소에선 diff 를 돌리지 않는다
+handle('file-diff', async (_, rel) => {
+  const p = current && inProject(rel);
+  if (!p || gitConfigIsRisky(current.root)) return null;
+  const out = await git(['diff', 'HEAD', '-U3', '--no-ext-diff', '--no-textconv', '--no-color', '--', path.relative(current.root, p)], current.root);
+  if (out && out.trim()) return out.length > 600000 ? `${out.slice(0, 600000)}\n… (너무 길어 여기까지)` : out;
+  const st = fs.statSync(p, { throwIfNoEntry: false });
+  if (!st || !st.isFile() || st.size > 2 * 1024 * 1024) return null;
+  const lines = fs.readFileSync(p, 'utf8').split('\n');
+  return `new file\n@@ +1,${lines.length} @@\n${lines.slice(0, 3000).map((l) => `+${l}`).join('\n')}`;
 });
 
 // 창 크기: 설정 패널의 프리셋(작게 · 보통 · 크게) · 최대화 · 전체 화면
