@@ -746,7 +746,7 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0,
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 // #debug 로 열면 성능 점검용으로 렌더러를 꺼내 볼 수 있다
-if (/[#&]debug\b/.test(location.hash)) window.__rp = { renderer, composer, bloom, get scene() { return scene; }, get camera() { return camera; }, get inScene() { return inScene; }, get sun() { return sun; }, get busy() { return busy; }, get mode() { return mode; }, get near() { return walk.near?.p || walk.near?.name || !!walk.near; }, get ready() { return walk.ready; }, get walk() { return walk; }, get props() { return props; } };
+if (/[#&]debug\b/.test(location.hash)) window.__rp = { renderer, composer, bloom, get scene() { return scene; }, get camera() { return camera; }, get inScene() { return inScene; }, get sun() { return sun; }, get busy() { return busy; }, get mode() { return mode; }, get near() { return walk.near?.p || walk.near?.name || !!walk.near; }, get ready() { return walk.ready; }, get walk() { return walk; }, get props() { return props; }, get night() { return night; }, blocked: (x, z) => blocked(x, z), groundAt: (x, z) => groundAt(x, z), get walks() { return walks; }, get S() { return S; }, get cars() { return cars.length; }, roadRoom: () => roadRoom };
 
 const hemi = new THREE.HemisphereLight('#ffffff', '#6d7a5a', 1.2);
 scene.add(hemi);
@@ -1673,7 +1673,9 @@ function setPlaying(on) {
 // ───────────────────────── 거리의 움직임 ─────────────────────────
 // 사람 키 배율: 도시(1층 높이 0.9 · 차 길이 1.7 에 맞게 작게) · 건물 안(책상이 허리쯤 오게 크게)
 const SCALE_CITY = 0.55, SCALE_IN = 1.35;
-const maxCars = HAS_GIT ? Math.max(12, Math.min(110, Math.round(Math.sqrt(N) * 3.4))) : 16;
+// 길이 짧은 작은 도시(파일 몇 개 · 커밋 없음)에 차가 꽉 차면 걷자마자 치여 제자리로 튕겨 왔다 — 길 9칸에 한 대까지만
+const roadRoom = Math.max(3, Math.floor(roads.reduce((s, r) => s + r.len, 0) / 9));
+const maxCars = Math.min(roadRoom, HAS_GIT ? Math.max(12, Math.min(110, Math.round(Math.sqrt(N) * 3.4))) : 16);
 const maxPeople = Math.max(12, Math.min(200, Math.round(files.length / 4)));
 const CAR_COLORS = ['#e94b3c', '#f4f4f4', '#2d2f33', '#3c6ee0', '#f5c542', '#8a8f98', '#2fae6b', '#f4f4f4', '#2d2f33'].map(C);
 
@@ -2386,6 +2388,7 @@ function moveCranes(time) {
 // ☁️ 구름 / ✨ 별
 const cloudMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, flatShading: true, transparent: true, opacity: 0.92 });
 const cloudGeo = new THREE.IcosahedronGeometry(1, 0);
+const CLOUD_X = Math.max(S, 40) * 1.3; // 이만큼 오른쪽으로 가면 왼쪽 끝에서 다시
 const clouds = Array.from({ length: Math.max(6, Math.round(S / 14)) }, (_, k) => {
   const g = new THREE.Group();
   const n = 3 + (k % 3);
@@ -2396,7 +2399,9 @@ const clouds = Array.from({ length: Math.max(6, Math.round(S / 14)) }, (_, k) =>
     m.position.set((j - n / 2) * 2.4, mr() * 1.2, mr() * 2 - 1);
     g.add(m);
   }
-  g.position.set((mr() - 0.5) * S * 2.4, S * 0.42 + mr() * S * 0.12, (mr() - 0.5) * S * 2 - S * 0.3);
+  // 작은 도시에서도 구름은 기본 시점(높이 18쯤)보다 위에 — 아니면 카메라와 도시 사이에 큰 회색 덩어리로 낀다
+  const span = Math.max(S, 40);
+  g.position.set((mr() - 0.5) * span * 2.4, Math.max(S * 0.42, 26) + mr() * span * 0.12, (mr() - 0.5) * span * 2 - S * 0.3);
   g.userData.speed = 1 + mr() * 1.6;
   scene.add(g);
   return g;
@@ -2910,7 +2915,8 @@ function nearestBuilding(x, z) {
 const headPos = () => walk.pos.clone().setY(walk.pos.y + (walk.sitDy || 0) + 0.72 * walk.scale);
 const eyePos = () => walk.pos.clone().setY(walk.pos.y + (walk.jy || 0) + (walk.sitDy || 0) + EYE_H * walk.scale).add(new THREE.Vector3(Math.sin(walk.heading), 0, Math.cos(walk.heading)).multiplyScalar(0.14 * walk.scale));
 // 지금 시점(1인칭 / 3인칭)에서 카메라가 있어야 할 곳과 바라볼 점
-function walkCamDesired() {
+// dt 를 주면(매 프레임 따라갈 때) 가림 거리를 부드럽게: 당길 땐 빨리, 물러날 땐 천천히 — 건물 모서리를 스칠 때 카메라가 들락날락 튀던 것
+function walkCamDesired(dt) {
   if (walk.fp) {
     const eye = eyePos().add(walk.lag), cl = Math.cos(walk.look);
     const look = eye.clone().add(new THREE.Vector3(Math.sin(walk.heading) * cl, -Math.sin(walk.look), Math.cos(walk.heading) * cl));
@@ -2933,7 +2939,9 @@ function walkCamDesired() {
     if (hit) dist = Math.min(dist, hit.distance - 0.25);
   }
   raycaster.far = Infinity;
-  return { pos: head.clone().addScaledVector(dir, Math.max(0.8 * walk.scale, dist)), look: head };
+  const want = Math.max(0.8 * walk.scale, dist);
+  walk.camD = dt == null || walk.camD == null ? want : walk.camD + (want - walk.camD) * Math.min(1, dt * (want < walk.camD ? 16 : 4));
+  return { pos: head.clone().addScaledVector(dir, walk.camD), look: head };
 }
 function setView(fp) {
   walk.fp = fp;
@@ -2962,7 +2970,7 @@ async function startWalkNow() {
   tip.hidden = true;
   const [x, z] = spawnPoint(controls.target);
   walk.pos.set(x, groundAt(x, z), z);
-  walk.jy = walk.vy = 0; walk.lag.set(0, 0, 0); walk.turnLag = 0;
+  walk.jy = walk.vy = 0; walk.lag.set(0, 0, 0); walk.turnLag = 0; walk.jumped = false; walk.jumpQ = 0;
   walk.sit = null; walk.sitT = 0; renderSitBtn();
   walk.knock = 0; walk.tumble = 0; walk.kx = walk.kz = 0;
   walk.yaw = Math.atan2(camera.position.x - x, camera.position.z - z);
@@ -3036,7 +3044,7 @@ function updateWalk(dt, time) {
   walk.heading += turn * (run ? 2.4 : 2.0) * dt;
   // 속도는 키 기준(초당 키의 몇 배) — 걷기 2.2배 · 달리기 5배 · 뒷걸음 1.1배. 바로 붙지 않고 가감속한다
   const H = walk.scale, want = (fwd > 0 ? (run ? 5 : 2.2) : fwd < 0 ? -1.1 : 0) * H;
-  walk.v = (walk.v || 0) + clamp(want - (walk.v || 0), -7 * H * dt, (run ? 6 : 4.5) * H * dt);
+  walk.v = (walk.v || 0) + clamp(want - (walk.v || 0), -7 * H * dt, (run ? 8 : 7) * H * dt); // 걷기 최고 속도까지 0.3초 · 달리기 0.6초
   // 발 높이보다 한 걸음(키의 0.2배) 넘게 높은 것에는 막히고, 그보다 낮으면 올라선다 (점프하면 더 높은 데도)
   const feet = walk.pos.y + walk.jy, reach = feet + 0.2 * H;
   const stuck = world.solid(walk.pos.x, walk.pos.z, reach, R_AVATAR * H * 0.7);
@@ -3079,13 +3087,19 @@ function updateWalk(dt, time) {
   if (walk.jy > 0 || walk.vy) { const abs = walk.pos.y + walk.jy; walk.lag.y += walk.pos.y - under; walk.pos.y = under; walk.jy = abs - under; }
   else if (under < walk.pos.y - 0.05 * H) { walk.jy = walk.pos.y - under; walk.lag.y += walk.jy; walk.pos.y = under; }
   else walk.pos.y += (under - walk.pos.y) * Math.min(1, dt * 14);
-  // 점프(Space): 키의 0.7배쯤 뛰어오른다. 공중에서도 가던 방향 · 속도 그대로, 착지하면 찌그러졌다 돌아온다
-  if (walk.jumpQ && walk.ready && !walk.jy && !walk.vy) { walk.vy = 4.8 * H; sfx.jump(); }
-  walk.jumpQ = false;
+  // 점프(Space): 키의 0.7배쯤 뛰어오른다. 공중에서도 가던 방향 · 속도 그대로, 착지하면 찌그러졌다 돌아온다.
+  // 착지 0.12초 전에 눌러도(버퍼), 턱에서 걸어 나간 지 0.1초 안에 눌러도(코요테) 뛴다 — 점프가 씹히지 않게
+  const grounded = !walk.jy && !walk.vy;
+  walk.offT = grounded ? 0 : (walk.offT || 0) + dt;
+  if (walk.jumpQ === true) walk.jumpQ = 0.12;
+  if (walk.jumpQ > 0 && walk.ready && !walk.jumped && (grounded || (walk.offT < 0.1 && walk.vy <= 0))) {
+    walk.vy = 4.8 * H; walk.jumped = true; walk.jumpQ = 0; sfx.jump();
+  }
+  walk.jumpQ = Math.max(0, (walk.jumpQ || 0) - dt);
   if (walk.vy || walk.jy > 0) {
-    walk.vy -= 16 * H * dt;
+    walk.vy -= 16 * H * dt * (walk.vy < 0 ? 1.7 : 1); // 내려올 땐 1.7배 빨리 — 오를 때와 같으면 둥둥 떠 보인다
     walk.jy += walk.vy * dt;
-    if (walk.jy <= 0 && walk.vy <= 0) { const hard = walk.vy < -2 * H; walk.jy = 0; walk.vy = 0; walk.land = hard ? 1 : 0.5; if (under > world.groundAt(walk.pos.x, walk.pos.z) + 0.01) walk.v *= 0.2; /* 받침 위엔 착 붙는다 */ if (walk.ready) sfx.step(world !== CITY, true); }
+    if (walk.jy <= 0 && walk.vy <= 0) { const hard = walk.vy < -2 * H; walk.jy = 0; walk.vy = 0; walk.jumped = false; walk.land = hard ? 1 : 0.5; if (under > world.groundAt(walk.pos.x, walk.pos.z) + 0.01) walk.v *= 0.2; /* 받침 위엔 착 붙는다 */ if (walk.ready) sfx.step(world !== CITY, true); }
     else if (walk.jy < 0) walk.jy = 0;
   }
   walk.land = Math.max(0, (walk.land || 0) - dt * 5);
@@ -3163,7 +3177,10 @@ function updateWalk(dt, time) {
     body.rotation.z *= 1 - t;
     body.position.y *= 1 - t;
   }
-  ud.ring.position.y = 0.02 - (walk.jy + walk.sitDy) / H;
+  // 고리 둘레 네 곳의 바닥 중 가장 높은 곳에 — 차도에 서 있을 때 보도 턱에 반쯤 묻히던 것
+  const rr = 0.38 * H, px = walk.pos.x, pz = walk.pos.z;
+  const ringGround = Math.max(walk.pos.y, world.groundAt(px + rr, pz), world.groundAt(px - rr, pz), world.groundAt(px, pz + rr), world.groundAt(px, pz - rr));
+  ud.ring.position.y = 0.02 + (ringGround - walk.pos.y - walk.jy - walk.sitDy) / H;
   ud.ring.material.opacity = 0.35 + 0.25 * Math.sin(time * 3);
 
   const near = moving ? world.near(walk.pos.x, walk.pos.z) : null;
@@ -3174,7 +3191,7 @@ function updateWalk(dt, time) {
   }
 
   if (!tween) {
-    const { pos, look } = walkCamDesired();
+    const { pos, look } = walkCamDesired(dt);
     camera.position.lerp(pos, 1 - Math.exp(-dt * (walk.fp ? 30 : 12)));
     camTarget.copy(look);
     camera.lookAt(camTarget);
@@ -3931,7 +3948,7 @@ async function travelToNow(fl, via) {
 }
 function placeAvatarInside(x, z, heading) {
   walk.pos.set(x, 0, z);
-  walk.jy = walk.vy = 0; walk.lag.set(0, 0, 0); walk.turnLag = 0;
+  walk.jy = walk.vy = 0; walk.lag.set(0, 0, 0); walk.turnLag = 0; walk.jumped = false; walk.jumpQ = 0;
   walk.sit = null; walk.sitT = 0; renderSitBtn();
   walk.knock = 0; walk.tumble = 0; walk.kx = walk.kz = 0;
   walk.heading = heading;
@@ -4842,7 +4859,7 @@ renderer.setAnimationLoop(() => {
   moveCranes(time);
   for (const c of clouds) {
     c.position.x += c.userData.speed * dt;
-    if (c.position.x > S * 1.3) c.position.x = -S * 1.3;
+    if (c.position.x > CLOUD_X) c.position.x = -CLOUD_X;
   }
 
   const sel = mode === 'orbit' && state.selected >= 0 && files[state.selected].box;
