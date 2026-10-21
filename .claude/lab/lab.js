@@ -95,12 +95,15 @@ app.whenReady().then(async () => {
   steps.push(await step('건물 고르기', () => js("document.querySelector('#hot li')?.click()"), 2000));
   steps.push(await step('걷기 시작', startWalk, 800));
   // 막힘: 4초 걷고 → 왼쪽으로 돌며 3초 → 달리기 3초. 움직인 거리가 작으면 갇힌 것
-  const p0 = await js('[__rp.walk.pos.x, __rp.walk.pos.z]');
+  const p0 = await js('[__rp.walk.pos.x, __rp.walk.pos.z]'), tw0 = await now();
   steps.push(await step('걷기 4초', async () => { key('W', true); await wait(4000); }, 0));
   steps.push(await step('돌며 걷기', async () => { key('A', true); await wait(3000); key('A', false); }, 0));
   steps.push(await step('달리며 점프', async () => { key('Shift', true); for (let i = 0; i < 4; i++) { await tap('Space'); await wait(700); } key('Shift', false); key('W', false); }, 600));
   const p1 = await js('[__rp.walk.pos.x, __rp.walk.pos.z]');
-  result.walk = { movedM: p0 && p1 ? +Math.hypot(p1[0] - p0[0], p1[1] - p0[1]).toFixed(1) : null };
+  // 걸은 길이(프레임마다 위치 차이의 합) — 돌며 걷기는 제자리로 돌아오므로 출발점과의 거리로는 갇힘을 못 가린다
+  const wf = await frames(tw0);
+  let walked = 0; for (let i = 1; i < wf.length; i++) walked += Math.hypot(wf[i][2] - wf[i - 1][2], wf[i][4] - wf[i - 1][4]);
+  result.walk = { movedM: +walked.toFixed(1), netM: p0 && p1 ? +Math.hypot(p1[0] - p0[0], p1[1] - p0[1]).toFixed(1) : null };
   steps.push(await step('걷기 끝', () => tap('Escape'), 2500));
   steps.push(await step('들어가기', async () => { await js("document.querySelector('#hot li')?.click()"); await wait(1500); await js("document.querySelector('[data-act=enter]')?.click()"); }, 4000));
   result.inside = await js('__rp.mode');
