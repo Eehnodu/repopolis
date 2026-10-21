@@ -24,8 +24,8 @@ jobs:
       run:
         shell: bash  # Windows 에서도 한 줄이라도 실패하면 멈추게
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -59,7 +59,7 @@ jobs:
             codesign --verify --deep --strict --verbose=2 zipcheck/Repopolis.app
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: repopolis-${{ runner.os }}
           if-no-files-found: error
@@ -72,11 +72,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: out
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: out/*
           generate_release_notes: true
