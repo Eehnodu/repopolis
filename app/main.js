@@ -80,6 +80,18 @@ function git(args, cwd) {
   });
 }
 
+// 고치기만 했을 때(파일 목록 · 커밋 수가 그대로): 페이지를 다시 불러오지 않고 열린 화면에 새 데이터만 보낸다.
+// 화면이 받지 못하면(도시가 아닌 화면 · 맞지 않는 데이터) 'live-failed' 로 돌아와 예전처럼 다시 불러온다
+const sameShape = (a, b) => a.commits.length === b.commits.length && a.files.length === b.files.length && a.files.every((f, k) => f.p === b.files[k].p);
+function showCityLive(data, toast) {
+  fs.writeFileSync(cityFile(), renderHtml(data, { assets: LOCAL_ASSETS }));
+  updateTray(data);
+  const onCity = (w) => w && !w.isDestroyed() && w.webContents.getURL().startsWith(`${ORIGIN}/city.html`);
+  if (onCity(win)) win.webContents.send('live', { data, toast });
+  else return showCity(data, '');
+  if (mini && !mini.isDestroyed()) { if (mini.isVisible() && onCity(mini)) mini.webContents.send('live', { data }); else mini.dirty = true; }
+}
+
 function showCity(data, hash) {
   fs.writeFileSync(cityFile(), renderHtml(data, { assets: LOCAL_ASSETS }));
   win.setTitle(`Repopolis — ${data.name}`);
@@ -114,10 +126,15 @@ async function openProject(root) {
 }
 
 // ───────── 실시간 감시 ─────────
+// 공사 현황의 지문: 어떤 파일이 바뀌었는지(status) + 얼마나 바뀌었는지(diff 줄 수) — 이미 고치던 파일을 더 고쳐도 알아챈다
+async function wipKeyOf(root) {
+  const [st, diff] = await Promise.all([git(['status', '--porcelain', '--untracked-files=all'], root), git(['diff', '--numstat', '--no-ext-diff', '--no-textconv', 'HEAD'], root)]);
+  return st === null ? null : `${st}\n${diff || ''}`;
+}
 // 커밋: .git/logs/HEAD 변경을 감지 / 공사 현황: git status를 주기적으로 비교
 async function watch(proj) {
   if (!proj.data.git || gitConfigIsRisky(proj.root)) return; // git 을 안 쓰는 프로젝트는 실시간 감시도 없다
-  proj.wipKey = await git(['status', '--porcelain', '--untracked-files=all'], proj.root);
+  proj.wipKey = await wipKeyOf(proj.root);
   const gitDir = (await git(['rev-parse', '--absolute-git-dir'], proj.root))?.trim();
   if (proj.stopped) return; // 기다리는 사이 다른 프로젝트로 바뀌었다 — 감시자를 남기지 않는다
   if (gitDir && fs.existsSync(path.join(gitDir, 'logs', 'HEAD'))) {
@@ -132,7 +149,7 @@ async function watch(proj) {
     } catch {}
   }
   proj.poll = setInterval(async () => {
-    const key = await git(['status', '--porcelain', '--untracked-files=all'], proj.root);
+    const key = await wipKeyOf(proj.root);
     if (key !== null && key !== proj.wipKey) refresh(proj);
   }, WIP_POLL_MS);
 }
@@ -153,7 +170,7 @@ async function refresh(proj) {
   try {
     const data = await scan(proj.root);
     if (proj.stopped) return;
-    proj.wipKey = await git(['status', '--porcelain', '--untracked-files=all'], proj.root);
+    proj.wipKey = await wipKeyOf(proj.root);
     const before = proj.data, oldN = before.commits.length, newN = data.commits.length;
     const wipBefore = before.files.filter((f) => f.wip).length, wipNow = data.files.filter((f) => f.wip).length;
     proj.data = data;
@@ -174,7 +191,8 @@ async function refresh(proj) {
       const fresh = data.files.find((f) => f.wip && !was.has(f.p));
       notify(`🏗️ 공사 시작 — ${data.name}`, `${fresh ? fresh.p : ''} · 공사 중 ${wipNow}곳`);
     }
-    await showCity(data, params.toString());
+    if (sameShape(before, data)) showCityLive(data, params.get('toast'));
+    else await showCity(data, params.toString());
   } catch (e) {
     debug('refresh failed', e);
     // git 작업 도중(리베이스 등)엔 실패할 수 있다 — 다음 변화 때 다시 시도
@@ -194,6 +212,7 @@ handle('home', () => {
   win.setTitle('Repopolis');
   return win.loadURL(LAUNCHER);
 });
+handle('live-failed', (e) => (mini && !mini.isDestroyed() && e.sender === mini.webContents ? loadMini() : current && showCity(current.data, 'live=1')));
 handle('pick', async () => {
   const r = await dialog.showOpenDialog(win, { title: '도시로 만들 프로젝트 폴더', properties: ['openDirectory'] });
   if (!r.canceled && r.filePaths[0]) await openProject(r.filePaths[0]);

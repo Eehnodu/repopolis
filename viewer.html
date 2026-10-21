@@ -910,10 +910,12 @@ writeDistricts();
 // 필지 (파일마다 한 칸) + 마당 나무
 const LOT = { grass: C('#8dbb64'), pave: C('#d6d0c3'), work: C('#d8a24a') };
 const lotMesh = inst(box, groundMat, files.length, { cast: false });
-for (const f of files) {
-  put(lotMesh, f.i, f.x, f.surface, f.z, Math.max(0.2, f.cell.w - 0.35), 0.05, Math.max(0.2, f.cell.h - 0.35));
-  lotMesh.setColorAt(f.i, f.wip ? LOT.work : typeOf(f.l) === 0 ? LOT.grass : LOT.pave);
+for (const f of files) put(lotMesh, f.i, f.x, f.surface, f.z, Math.max(0.2, f.cell.w - 0.35), 0.05, Math.max(0.2, f.cell.h - 0.35));
+function paintLots() {
+  for (const f of files) lotMesh.setColorAt(f.i, f.wip ? LOT.work : typeOf(f.l) === 0 ? LOT.grass : LOT.pave);
+  lotMesh.instanceColor.needsUpdate = true;
 }
+paintLots();
 
 const treeSpots = [];
 const rand = rng(files.length * 7919 + N);
@@ -1943,7 +1945,7 @@ function makeHoodie({ hood, skin, shoe, ear, blink = false }) {
 // 개별 메시 사람에 걸음 자세를 입힌다
 function poseHoodie(ud, ph, a, idle = 0) {
   const G = gait(ph, a, idle);
-  ud.body.position.y = G.y;
+  ud.body.position.set(0, G.y, 0); // x · z 도 매번 되돌린다 — 구를 때 옮긴 만큼이 쌓여 몸통만 날아가던 것
   ud.body.rotation.set(0, G.twist, G.roll);
   for (let s = 0; s < 2; s++) {
     const f = G.feet[s], h = G.hands[s];
@@ -2340,7 +2342,14 @@ function moveCritters(dt, time) {
 
 // 🏗️ 공사장 — 커밋 안 된 변경이 있는 파일에 타워 크레인
 const YELLOW = new THREE.MeshStandardMaterial({ color: '#f2b705', roughness: 0.6 });
-const cranes = files.filter((f) => f.wip).slice(0, 30).map((f, k) => {
+// 공사 중 파일이 바뀌면(실시간 갱신) 크레인만 다시 세운다
+const wipCranes = () => files.filter((f) => f.wip).slice(0, 30).map(makeCrane);
+let cranes = wipCranes();
+function rebuildCranes() {
+  for (const c of cranes) { scene.remove(c.g); c.load.material.dispose(); }
+  cranes = wipCranes();
+}
+function makeCrane(f, k) {
   const g = new THREE.Group();
   const mast = new THREE.Mesh(box, YELLOW);
   mast.castShadow = true;
@@ -2356,7 +2365,7 @@ const cranes = files.filter((f) => f.wip).slice(0, 30).map((f, k) => {
   scene.add(g);
   const mx = f.x + (f.cell.w / 2 - 0.55) * (k % 2 ? 1 : -1), mz = f.z + (f.cell.h / 2 - 0.55) * (k % 3 ? 1 : -1);
   return { f, g, mast, pivot, jib, counter, cable, load, tip, mx, mz, speed: 0.25 + (k % 5) * 0.08, phase: k };
-});
+}
 function moveCranes(time) {
   for (const c of cranes) {
     const h = (c.f.box ? c.f.box.h : 0) + 3.2, L = Math.max(4, (c.f.cell.w + c.f.cell.h) * 0.45);
@@ -2498,13 +2507,16 @@ function applySky(time) {
 }
 
 // ───────────────────────── UI ─────────────────────────
-const totalLines = files.reduce((s, f) => s + f.l, 0);
-$('#stats').innerHTML = [
-  ['건물', `${fmt(files.length)}채`],
-  ['코드', `${fmt(totalLines)}줄`],
-  ...(HAS_GIT ? [['🤖 Claude', `${Math.round((claudeCommits / N) * 100)}%`]] : []),
-  ...(cranes.length ? [['🏗️ 공사 중', `${files.filter((f) => f.wip).length}곳`]] : []),
-].map(([k, v]) => `<div class="chip panel">${k}<b>${v}</b></div>`).join('');
+function renderStats() {
+  const totalLines = files.reduce((s, f) => s + f.l, 0);
+  $('#stats').innerHTML = [
+    ['건물', `${fmt(files.length)}채`],
+    ['코드', `${fmt(totalLines)}줄`],
+    ...(HAS_GIT ? [['🤖 Claude', `${Math.round((claudeCommits / N) * 100)}%`]] : []),
+    ...(cranes.length ? [['🏗️ 공사 중', `${files.filter((f) => f.wip).length}곳`]] : []),
+  ].map(([k, v]) => `<div class="chip panel">${k}<b>${v}</b></div>`).join('');
+}
+renderStats();
 
 $('#howto').innerHTML = TYPES.map((t, k) =>
   `<span class="ic">${t.icon}</span><span class="nm">${t.name}</span><span class="v">${k === TYPES.length - 1 ? `${fmt(TYPES[k - 1].max)}줄 이상` : `~${fmt(t.max)}줄`}</span>`).join('') +
@@ -4656,6 +4668,25 @@ if (BRIDGE?.getNotify) {
   $('#optMini').addEventListener('click', () => BRIDGE.mini('open'));
   $('#setBtn').addEventListener('click', () => BRIDGE.getNotify().then((v) => { $('#optNotify').checked = v; }));
 }
+
+// ⚡ 실시간 갱신 — 파일 목록 · 커밋 수가 그대로면(고치기만 했으면) 다시 불러오지 않고 지금 도시에서
+// 높이 · 공사 표시 · 크레인만 바꾼다. 걷던 자리 · 열어 둔 것 · 음악이 그대로 이어진다. 배치(땅)는 열 때 정한 그대로
+function applyLive(d, msg) {
+  if (d.commits.length !== N || d.files.length !== files.length || d.files.some((g, k) => g.p !== files[k].p)) return false;
+  const wipBefore = files.map((f) => f.wip);
+  d.files.forEach((g, k) => Object.assign(files[k], { l: g.l, fn: g.fn, b: g.b, wip: g.wip, dep: g.dep || [] }));
+  usedBy.forEach((u) => (u.length = 0));
+  for (const f of files) for (const j of f.dep) usedBy[j].push(f.i);
+  if ('src' in d) DATA.src = d.src;
+  paintLots();
+  if (files.some((f, k) => !f.wip !== !wipBefore[k])) { rebuildCranes(); warm(scene); }
+  renderStats();
+  if (state.time >= N) applyTime(); // 높이는 그리기 반복에서 새 높이까지 천천히 자란다
+  if (MINI) renderMini();
+  else if (msg) toast(msg);
+  return true;
+}
+BRIDGE?.onLive?.(({ data, toast: msg }) => { if (!applyLive(data, msg)) BRIDGE.liveFailed(); });
 
 // ───────────────────────── 시작 ─────────────────────────
 const CAM_KEY = `cc-cam-${DATA.root}`;

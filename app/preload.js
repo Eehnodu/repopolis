@@ -25,4 +25,6 @@ contextBridge.exposeInMainWorld('repopolis', {
   updateInstall: () => ipcRenderer.invoke('update-install'),
   updatePage: () => ipcRenderer.invoke('update-page'),
   onUpdate: (cb) => ipcRenderer.on('update', (_, s) => cb(s)),
+  onLive: (cb) => ipcRenderer.on('live', (_, m) => cb(m)),
+  liveFailed: () => ipcRenderer.invoke('live-failed'),
 });
