@@ -75,8 +75,8 @@ app.whenReady().then(async () => {
     fs.mkdirSync(out, { recursive: true });
     const shot = async (name) => fs.writeFileSync(path.join(out, `${name}.png`), (await w.webContents.capturePage()).toPNG());
     await shot('day');
-    await tap('N'); await wait(2500); await tap('N'); await wait(2500); await shot('night');
-    await tap('N'); await wait(2500); await tap('N'); await wait(2500);
+    await tap('N'); await wait(3000); await shot('night'); // 하늘은 자동 → 낮 → 밤 → 자동 순. #sky=day 에서 한 번이면 밤
+    await tap('N'); await wait(1200); await tap('N'); await wait(2500); // 밤 → 자동 → 낮
     await startWalk(); await wait(1000); await shot('walk');
     key('W', true); await wait(2000); key('W', false); await wait(800); await shot('walk2');
     await tap('Escape'); await wait(2500);
@@ -90,7 +90,7 @@ app.whenReady().then(async () => {
   result.city = await js(`({ buildings: document.querySelector('#stats')?.textContent, calls: __rp.renderer.info.render.calls, tris: __rp.renderer.info.render.triangles, programs: __rp.renderer.info.programs.length })`);
   const steps = [];
   steps.push(await step('둘러보기 (기준)', () => wait(2500)));
-  steps.push(await step('밤으로', async () => { await tap('N'); await wait(1200); await tap('N'); }, 2500));
+  steps.push(await step('밤으로', () => tap('N'), 3000));
   steps.push(await step('낮으로', async () => { await tap('N'); await wait(1200); await tap('N'); }, 2500));
   steps.push(await step('건물 고르기', () => js("document.querySelector('#hot li')?.click()"), 2000));
   steps.push(await step('걷기 시작', startWalk, 800));
